@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="CompilerConfiguration">
+    <annotationProcessing>
+      <profile name="Maven default annotation processors profile" enabled="true">
+        <sourceOutputDir name="target/generated-sources/annotations" />
+        <sourceTestOutputDir name="target/generated-test-sources/test-annotations" />
+        <outputRelativeToContentRoot value="true" />
+        <module name="base-java-study" />
+        <module name="book-core-java" />
+        <module name="java-nio-study" />
+        <module name="zookeeper-study" />
+      </profile>
+    </annotationProcessing>
+    <bytecodeTargetLevel>
+      <module name="base-java-study" target="1.8" />
+      <module name="book-core-java" target="1.8" />
+      <module name="java-nio-study" target="1.8" />
+      <module name="zookeeper-study" target="1.8" />
+    </bytecodeTargetLevel>
+  </component>
+</project>
