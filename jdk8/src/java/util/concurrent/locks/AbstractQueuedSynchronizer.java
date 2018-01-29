@@ -1509,6 +1509,15 @@ public abstract class AbstractQueuedSynchronizer
      *         is at the head of the queue or the queue is empty
      * @since 1.7
      */
+    /**
+     * hasQueuedPredecessors中，如果tail和head不同，并且head的next为空或者head的next的线程不是当前线程(即队列中有节点，且第一个节点不是当前线程)，则表示队列不为空。
+     * 有几种情况会导致h的next为空：
+     * 1）当前线程进入hasQueuedPredecessors的同时，另一个线程已经更改了tail（在enq中），但还没有将head的next指向自己，这中情况表明队列不为空；
+     * 2）当前线程将head赋予h后，head被另一个线程移出队列，导致h的next为空，这种情况说明锁已经被占用。
+     * 3) 可能是这个时候正好被锁的线程释放锁，并且等待队列只有一个等待，直接变为了head从而head.next变为空，所以说明肯定是有前一个要获得锁或者等待锁的节点
+     *    可能刚开始为当前线程，判断完state==0后，切换为另一个线程，另一个线程获取到锁，设置为Head为自己后，切换回来
+     * 参考 http://blog.csdn.net/tomato__/article/details/25782747
+     */
     public final boolean hasQueuedPredecessors() {
         // The correctness of this depends on head being initialized
         // before tail and on head.next being accurate if the current
