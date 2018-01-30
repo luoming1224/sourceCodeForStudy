@@ -654,6 +654,8 @@ public abstract class AbstractQueuedSynchronizer
         Node s = node.next;
         if (s == null || s.waitStatus > 0) {
             s = null;
+            //这里并没有从头向尾寻找，而是相反的方向寻找，为什么呢？
+            //https://my.oschina.net/xianggao/blog/532709
             for (Node t = tail; t != null && t != node; t = t.prev)
                 if (t.waitStatus <= 0)
                     s = t;
@@ -667,6 +669,10 @@ public abstract class AbstractQueuedSynchronizer
      * propagation. (Note: For exclusive mode, release just amounts
      * to calling unparkSuccessor of head if it needs signal.)
      */
+    //当该节点是队列中唯一一个节点时，状态为0，直接通过CAS操作将状态改成PROPAGATE
+    // （之所以要修改而不保持为0是因为，若下一个节点是shared的节点，则可以直接获取锁。当下一个节点获取锁成功，
+    // 调用setHeadAndPropagate，该方法中第一个if可能propagate为0(N)，但是waitStatus状态小于0（Y），则还是可以直接进入外层if中），
+    // 否则，该节点状态为SIGNAL，CAS修改状态为0，之后调用unparkSuccessor唤醒后继节点（独占的和共享的节点都要唤醒）。
     private void doReleaseShared() {
         /*
          * Ensure that a release propagates, even if there are other
@@ -688,6 +694,15 @@ public abstract class AbstractQueuedSynchronizer
                         continue;            // loop to recheck cases
                     unparkSuccessor(h);
                 }
+                //首节点的状态是0，则通过CAS设置为PROPAGATE，表示如果新连接在当前节点后的node的状态如果是shared，则无条件获取锁。
+                //考虑这样一种情况，当前节点node是一个shared状态的节点，并且是tail,则当前节点node的状态为0。
+                // 当node成功获取锁后，调用setHeadAndPropagate设置当前节点为head后，
+                // （此时node的前一个节点waitstatus<0,可以进入外层的if语句，next为空，则可以进入内层if语句）
+                // 调用doReleaseShared进行释放锁后的处理，此时当前节点就可以通过下面代码将状态设置为PROPAGATE了。
+                // 若此后有一个新的shared状态的node添加到队尾，则可以直接获取到锁，再次进入setHeadAndPropagate时，
+                // 当前节点的waitStatus为PROPAGATE（propagate可能等于0），保证能进入外层的if语句。
+                //PROPAGATE，表示下一次（当前节点获得锁时下一个节点还没有添加到队列中），shared状态节点将会无条件传播共享状态。
+                //参考链接 http://blog.csdn.net/u011470552/article/details/76483532
                 else if (ws == 0 &&
                          !compareAndSetWaitStatus(h, 0, Node.PROPAGATE))
                     continue;                // loop on failed CAS
@@ -724,9 +739,22 @@ public abstract class AbstractQueuedSynchronizer
          * racing acquires/releases, so most need signals now or soon
          * anyway.
          */
+        /*
+         * 尝试唤醒后继的结点：<br />
+         * propagate > 0说明许可还有能够继续被线程acquire;<br />
+         * 或者 之前的head被设置为PROPAGATE(PROPAGATE可以被转换为SIGNAL)说明需要往后传递;<br />
+         * 或者为null,我们还不确定什么情况。 <br />
+         * 并且 后继结点是共享模式或者为如上为null。
+         * <p>
+         * 上面的检查有点保守，在有多个线程竞争获取/释放的时候可能会导致不必要的唤醒。<br />
+         * http://www.cnblogs.com/zhanjindong/p/java-concurrent-package-aqs-AbstractQueuedSynchronizer.html
+         */
         if (propagate > 0 || h == null || h.waitStatus < 0 ||
             (h = head) == null || h.waitStatus < 0) {
             Node s = node.next;
+            // 后继结是共享模式或者s == null（不知道什么情况）
+            // 如果后继是独占模式，那么即使剩下的许可大于0也不会继续往后传递唤醒操作
+            // 即使后面有结点是共享模式。
             if (s == null || s.isShared())
                 doReleaseShared();
         }
