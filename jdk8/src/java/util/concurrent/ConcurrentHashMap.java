@@ -535,6 +535,8 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
      * simpler to use expressions such as {@code n - (n >>> 2)} for
      * the associated resizing threshold.
      */
+    // 数组扩容负载因子，在构造函数中覆盖此值只影响初始化table时的容量；
+    // 实际在扩容过程中根本没有用此值，而是用（n-(n>>>2)）表达式
     private static final float LOAD_FACTOR = 0.75f;
 
     /**
@@ -545,6 +547,7 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
      * tree removal about conversion back to plain bins upon
      * shrinkage.
      */
+    //链表转换成树的阈值，如果table[i]下面的链表长度大于8时就转换成红黑树
     static final int TREEIFY_THRESHOLD = 8;
 
     /**
@@ -552,6 +555,7 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
      * resize operation. Should be less than TREEIFY_THRESHOLD, and at
      * most 6 to mesh with shrinkage detection under removal.
      */
+    //树转换成链表的阈值，小于等于6时转换为链表，仅仅在扩容transfer时才可能树转链表
     static final int UNTREEIFY_THRESHOLD = 6;
 
     /**
@@ -572,6 +576,11 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
     private static final int MIN_TRANSFER_STRIDE = 16;
 
     /**
+     * 在扩容过程中，sizeCtl为负数，并且被划分为两个部分
+     * 高RESIZE_STAMP_BITS位表示generation stamp，低(32 - RESIZE_STAMP_BITS)位表示正在辅助扩容的线程数
+     * 为了保证sizeCtl一定为负数，generation stamp的最高位被置为1
+     */
+    /**
      * The number of bits used for generation stamp in sizeCtl.
      * Must be at least 6 for 32bit arrays.
      */
@@ -581,11 +590,15 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
      * The maximum number of threads that can help resize.
      * Must fit in 32 - RESIZE_STAMP_BITS bits.
      */
+    //辅助扩容的最大线程数
     private static final int MAX_RESIZERS = (1 << (32 - RESIZE_STAMP_BITS)) - 1;
 
     /**
      * The bit shift for recording size stamp in sizeCtl.
      */
+    // 由于高RESIZE_STAMP_BITS位表示generation stamp，所以操作时需要对generation stamp进行移位
+    // 保存时需要先左移RESIZE_STAMP_SHIFT位，再与正在扩容的线程数进行按位或操作
+    // 获取时，需要先右移RESIZE_STAMP_SHIFT位
     private static final int RESIZE_STAMP_SHIFT = 32 - RESIZE_STAMP_BITS;
 
     /*
@@ -617,7 +630,7 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
      * exported).  Otherwise, keys and vals are never null.
      */
     static class Node<K,V> implements Map.Entry<K,V> {
-        final int hash;
+        final int hash;     //Node节点的属性hash值保存的实际上是key的hash值（确切的说是key的hash值经过spread()函数计算后的结果）
         final K key;
         volatile V val;
         volatile Node<K,V> next;
@@ -689,6 +702,8 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
      * Returns a power of two table size for the given desired capacity.
      * See Hackers Delight, sec 3.2
      */
+    // 这个方法用于找到大于等于initialCapacity的最小的2的幂（initialCapacity如果就是2的幂，则返回的还是这个数）
+    // 参考 http://blog.csdn.net/fan2012huan/article/details/51097331
     private static final int tableSizeFor(int c) {
         int n = c - 1;
         n |= n >>> 1;
@@ -791,6 +806,12 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
      * when table is null, holds the initial table size to use upon
      * creation, or 0 for default. After initialization, holds the
      * next element count value upon which to resize the table.
+     */
+    /**
+     * sizeCtl是控制标识符，在不同的阶段，其值代表不同的意义
+     * （1）负数代表正在进行初始化或扩容操作 ,其中-1代表正在初始化 ,-N 表示有N-1个线程正在进行扩容操作
+     * （2）table == null时，表示创建table时的初始化大小，默认初始化值是0
+     * （3）table初始化后，表示触发下一次扩容操作的table容量阈值（大于该阈值时需要扩容）
      */
     private transient volatile int sizeCtl;
 
@@ -1015,18 +1036,19 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
             Node<K,V> f; int n, i, fh;
             if (tab == null || (n = tab.length) == 0)
                 tab = initTable();
-            else if ((f = tabAt(tab, i = (n - 1) & hash)) == null) {
+            else if ((f = tabAt(tab, i = (n - 1) & hash)) == null) {    // i=(n-1)&hash 等价于i=hash%n(前提是n为2的幂次方)
                 if (casTabAt(tab, i, null,
                              new Node<K,V>(hash, key, value, null)))
                     break;                   // no lock when adding to empty bin
             }
-            else if ((fh = f.hash) == MOVED)
+            else if ((fh = f.hash) == MOVED) //检查table[i]的节点的hash是否等于MOVED，如果等于，则检测到正在扩容，则帮助其扩容
                 tab = helpTransfer(tab, f);
             else {
                 V oldVal = null;
-                synchronized (f) {
+                // 当有修改操作时借助了synchronized来对table[i]进行锁定保证了线程安全
+                synchronized (f) { //锁定,（hash值相同的链表的头节点）
                     if (tabAt(tab, i) == f) {
-                        if (fh >= 0) {
+                        if (fh >= 0) {  //链表节点，TreeBin节点的hash值在TreeBin构造函数中设置为TREEBIN(-2)
                             binCount = 1;
                             for (Node<K,V> e = f;; ++binCount) {
                                 K ek;
@@ -1039,7 +1061,7 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
                                     break;
                                 }
                                 Node<K,V> pred = e;
-                                if ((e = e.next) == null) {
+                                if ((e = e.next) == null) {             //如果链表中不存在相同的key，则插入到链表末尾
                                     pred.next = new Node<K,V>(hash, key,
                                                               value, null);
                                     break;
@@ -1058,6 +1080,7 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
                         }
                     }
                 }
+                //插入成功后，如果插入的是链表节点，则要判断下该桶位是否要转化为树
                 if (binCount != 0) {
                     if (binCount >= TREEIFY_THRESHOLD)
                         treeifyBin(tab, i);
@@ -2213,6 +2236,9 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
      * Returns the stamp bits for resizing a table of size n.
      * Must be negative when shifted left by RESIZE_STAMP_SHIFT.
      */
+    // 0 <= Integer.numberOfLeadingZeros(n) <= 32;(只有n为负数时返回值为0，这里n>=0，返回值不会等于0)
+    // 按位或运算是为了将generation stamp的最高位置为1，这样再将generation stamp左移RESIZE_STAMP_SHIFT后，第32位就为1，保证在扩容过程中sizeCtl为负数
+    // 因为RESIZE_STAMP_SHIFT = 32 - RESIZE_STAMP_BITS;
     static final int resizeStamp(int n) {
         return Integer.numberOfLeadingZeros(n) | (1 << (RESIZE_STAMP_BITS - 1));
     }
@@ -2223,8 +2249,9 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
     private final Node<K,V>[] initTable() {
         Node<K,V>[] tab; int sc;
         while ((tab = table) == null || tab.length == 0) {
-            if ((sc = sizeCtl) < 0)
+            if ((sc = sizeCtl) < 0)             //如果sizeCtl为负数，则说明已经有其它线程正在进行扩容，
                 Thread.yield(); // lost initialization race; just spin
+            //初始化table之前，利用CAS将sizeCtl设置为-1，表示当前已有线程正在初始化，保证只有一个线程能够执行table初始化
             else if (U.compareAndSwapInt(this, SIZECTL, sc, -1)) {
                 try {
                     if ((tab = table) == null || tab.length == 0) {
@@ -2232,7 +2259,7 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
                         @SuppressWarnings("unchecked")
                         Node<K,V>[] nt = (Node<K,V>[])new Node<?,?>[n];
                         table = tab = nt;
-                        sc = n - (n >>> 2);
+                        sc = n - (n >>> 2);     //即sc = 0.75n
                     }
                 } finally {
                     sizeCtl = sc;
@@ -2323,9 +2350,9 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
         int c = (size >= (MAXIMUM_CAPACITY >>> 1)) ? MAXIMUM_CAPACITY :
             tableSizeFor(size + (size >>> 1) + 1);
         int sc;
-        while ((sc = sizeCtl) >= 0) {
+        while ((sc = sizeCtl) >= 0) {   //负数表示正在初始化或扩容
             Node<K,V>[] tab = table; int n;
-            if (tab == null || (n = tab.length) == 0) {
+            if (tab == null || (n = tab.length) == 0) {    //如果没有初始化，则进行初始化
                 n = (sc > c) ? sc : c;
                 if (U.compareAndSwapInt(this, SIZECTL, sc, -1)) {
                     try {
@@ -2336,23 +2363,35 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
                             sc = n - (n >>> 2);
                         }
                     } finally {
-                        sizeCtl = sc;
+                        sizeCtl = sc;   //更新扩容阈值
                     }
                 }
             }
-            else if (c <= sc || n >= MAXIMUM_CAPACITY)
+            else if (c <= sc || n >= MAXIMUM_CAPACITY) // 若欲扩容值不大于原阀值，或现有容量>=最大值，不需要扩容
                 break;
             else if (tab == table) {
                 int rs = resizeStamp(n);
-                if (sc < 0) {
+                if (sc < 0) {   //不懂为什么会出现sc<0 ？
                     Node<K,V>[] nt;
+                    /**
+                     * 1 (sc >>> RESIZE_STAMP_SHIFT) != rs ： 表示generation stamp不对
+                     * 2 sc == rs + 1 ：表示什么？？？ 感觉也有问题
+                     * 3 sc == rs + MAX_RESIZERS ： 感觉应该是sc == (rs << RESIZE_STAMP_SHIFT)  + MAX_RESIZERS 表示辅助扩容线程数达到最大
+                     * 4 (nt = nextTable) == null ：表示nextTable正在初始化
+                     * 5 transferIndex <= 0 ：表示所有hash桶均分配出去
+                     * 参考https://www.jianshu.com/p/487d00afe6ca
+                     */
+
+                    //如果不需要帮其扩容，直接返回
                     if ((sc >>> RESIZE_STAMP_SHIFT) != rs || sc == rs + 1 ||
                         sc == rs + MAX_RESIZERS || (nt = nextTable) == null ||
                         transferIndex <= 0)
                         break;
+                    //CAS设置sizeCtl=sizeCtl+1    增加扩容线程数
                     if (U.compareAndSwapInt(this, SIZECTL, sc, sc + 1))
-                        transfer(tab, nt);
+                        transfer(tab, nt);      //帮其扩容
                 }
+                //第一个执行扩容操作的线程，将sizeCtl设置为：(resizeStamp(n) << RESIZE_STAMP_SHIFT) + 2)
                 else if (U.compareAndSwapInt(this, SIZECTL, sc,
                                              (rs << RESIZE_STAMP_SHIFT) + 2))
                     transfer(tab, null);
@@ -2608,16 +2647,17 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
      * Replaces all linked nodes in bin at given index unless table is
      * too small, in which case resizes instead.
      */
+    // 将碰撞链表转换为红黑树，除非table大小非常小（默认小于64），则先直接扩容来解决碰撞
     private final void treeifyBin(Node<K,V>[] tab, int index) {
         Node<K,V> b; int n, sc;
         if (tab != null) {
-            if ((n = tab.length) < MIN_TREEIFY_CAPACITY)
+            if ((n = tab.length) < MIN_TREEIFY_CAPACITY)    //table容量小于64，则先扩容
                 tryPresize(n << 1);
-            else if ((b = tabAt(tab, index)) != null && b.hash >= 0) {
+            else if ((b = tabAt(tab, index)) != null && b.hash >= 0) {  // b.hash >= 0表示为链表，进一步验证
                 synchronized (b) {
-                    if (tabAt(tab, index) == b) {
+                    if (tabAt(tab, index) == b) {   //加锁后进一步验证，有可能被别的线程转换过了，时刻考虑并发
                         TreeNode<K,V> hd = null, tl = null;
-                        for (Node<K,V> e = b; e != null; e = e.next) {
+                        for (Node<K,V> e = b; e != null; e = e.next) {  //形成了一个TreeNode的双向链表
                             TreeNode<K,V> p =
                                 new TreeNode<K,V>(e.hash, e.key, e.val,
                                                   null, null);
@@ -2706,6 +2746,10 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
         }
     }
 
+    //ConcurrentHashMap链表转树时，并不会直接转，
+    //正如注释（Nodes for use in TreeBins）所说，只是把这些节点包装成TreeNode放到TreeBin中，
+    //再由TreeBin来转化红黑树
+    //TreeBin用于封装维护TreeNode，当链表转树时，用于封装TreeNode，也就是说，ConcurrentHashMap的红黑树存放的时TreeBin，而不是treeNode。
     /* ---------------- TreeBins -------------- */
 
     /**
