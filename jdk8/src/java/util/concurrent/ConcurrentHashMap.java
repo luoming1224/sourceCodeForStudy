@@ -573,6 +573,7 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
      * excessive memory contention.  The value should be at least
      * DEFAULT_CAPACITY.
      */
+    // 扩容线程每次最少要迁移16个hash桶
     private static final int MIN_TRANSFER_STRIDE = 16;
 
     /**
@@ -785,6 +786,9 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
      * The array of bins. Lazily initialized upon first insertion.
      * Size is always a power of two. Accessed directly by iterators.
      */
+    // map底层存储数据的数组，
+    // 采用延迟初始化，直到第一次插入数据时才真正初始化该数组，
+    // 数组大小通常为2的幂次方
     transient volatile Node<K,V>[] table;
 
     /**
@@ -818,6 +822,7 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
     /**
      * The next table index (plus one) to split while resizing.
      */
+    // 扩容索引，表示已经分配给扩容线程的table数组的索引位置。主要用来协调多个线程，并发安全的获取迁移任务（hash桶）
     private transient volatile int transferIndex;
 
     /**
@@ -961,6 +966,13 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
                 if ((ek = e.key) == key || (ek != null && key.equals(ek)))
                     return e.val;
             }
+            /**
+             * 此处的find操作会表现出多态性，出现动态调用，根据Node的实际类型调用相应的Node子类中的find函数
+             * eh < 0 有以下几种情况：
+             * （1）eh == MOVED(-1)，此节点为ForwardingNode，表示正在进行扩容操作，该hash桶已经被迁移至nextTable，会调用ForwardingNode子类的find函数
+             * （2）eh == TREEBIN(-2)，此节点为TreeBin，表示此hash桶中节点保存形式为红黑树结构，调用TreeBin子类的find函数
+             * （3）eh == RESERVED(-3)，此节点为ReservationNode，表示为一保留节点，调用ReservationNode子类的find函数（返回 null）
+             */
             else if (eh < 0)
                 return (p = e.find(h, key)) != null ? p.val : null;
             while ((e = e.next) != null) {
@@ -2186,10 +2198,11 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
     static final class ForwardingNode<K,V> extends Node<K,V> {
         final Node<K,V>[] nextTable;
         ForwardingNode(Node<K,V>[] tab) {
-            super(MOVED, null, null, null);
+            super(MOVED, null, null, null); //hash值为MOVED（-1）的节点就是ForwardingNode
             this.nextTable = tab;
         }
 
+        // 通过此方法，访问迁移到nextTable中的数据
         Node<K,V> find(int h, Object k) {
             // loop to avoid arbitrarily deep recursion on forwarding nodes
             outer: for (Node<K,V>[] tab = nextTable;;) {
@@ -2405,8 +2418,11 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
      */
     private final void transfer(Node<K,V>[] tab, Node<K,V>[] nextTab) {
         int n = tab.length, stride;
+        // 计算每次迁移的hash桶个数
         if ((stride = (NCPU > 1) ? (n >>> 3) / NCPU : n) < MIN_TRANSFER_STRIDE)
-            stride = MIN_TRANSFER_STRIDE; // subdivide range
+            stride = MIN_TRANSFER_STRIDE; // subdivide range（细分范围）
+        // 这里初始化nextTable时，貌似没有像初始化table那样考虑并发初始化问题
+        // 其实是在调用transfer(tab,null)处，通过CAS设置sizeClt值控制了并发问题，只有设置成功才可以调用transfer(tab,null)
         if (nextTab == null) {            // initiating
             try {
                 @SuppressWarnings("unchecked")
@@ -2417,7 +2433,7 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
                 return;
             }
             nextTable = nextTab;
-            transferIndex = n;
+            transferIndex = n;  // 从右边向左开始迁移桶中node
         }
         int nextn = nextTab.length;
         ForwardingNode<K,V> fwd = new ForwardingNode<K,V>(nextTab);
@@ -2427,12 +2443,16 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
             Node<K,V> f; int fh;
             while (advance) {
                 int nextIndex, nextBound;
+                //bound表示由当前线程负责迁移的hash桶的最后一个索引值（从右向左），--i>==bound，表示还在当前线程负责迁移的范围内，继续迁移
                 if (--i >= bound || finishing)
                     advance = false;
-                else if ((nextIndex = transferIndex) <= 0) {
+                else if ((nextIndex = transferIndex) <= 0) {    //表示table中的hash桶已经全部分配完毕，所有桶均有线程在进行迁移
                     i = -1;
                     advance = false;
                 }
+                //cas无锁算法设置 transferIndex = transferIndex - stride
+                //设置成功，表示table[transferIndex-1]--table[transferIndex-stride]这个闭区间内（stride）个hash桶由当前线程负责迁移
+                //当迁移完bound(负责的最后一个桶索引值)这个桶后，尝试更新transferIndex，获取下一批待迁移的hash桶
                 else if (U.compareAndSwapInt
                          (this, TRANSFERINDEX, nextIndex,
                           nextBound = (nextIndex > stride ?
@@ -2444,12 +2464,23 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
             }
             if (i < 0 || i >= n || i + n >= nextn) {
                 int sc;
+                // 迁移完成，将table指向新的数组,sizeClt设置为扩容阈值
+                // 这里貌似也没有考虑并发，没有通过CAS操作来设置这些值，其实此时只剩下最后一个扩容线程在完成此项工作，其他的辅助扩容线程均已退出
                 if (finishing) {
                     nextTable = null;
                     table = nextTab;
                     sizeCtl = (n << 1) - (n >>> 1);
                     return;
                 }
+                /**
+                 * 第一个扩容的线程，执行transfer方法之前，会设置 sizeCtl = (resizeStamp(n) << RESIZE_STAMP_SHIFT) + 2)
+                 * 后续帮其扩容的线程，执行transfer方法之前，会设置 sizeCtl = sizeCtl+1
+                 * 每一个退出transfer的方法的线程，退出之前，会设置 sizeCtl = sizeCtl-1
+                 * 那么最后一个线程退出时：
+                 * 必然有sc == (resizeStamp(n) << RESIZE_STAMP_SHIFT) + 2)，即 (sc - 2) == resizeStamp(n) << RESIZE_STAMP_SHIFT
+                 * https://www.jianshu.com/p/487d00afe6ca
+                 */
+                //不相等，说明不到最后一个线程，直接退出transfer方法
                 if (U.compareAndSwapInt(this, SIZECTL, sc = sizeCtl, sc - 1)) {
                     if ((sc - 2) != resizeStamp(n) << RESIZE_STAMP_SHIFT)
                         return;
@@ -2465,6 +2496,7 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
                 synchronized (f) {
                     if (tabAt(tab, i) == f) {
                         Node<K,V> ln, hn;
+                        // 链表迁移
                         if (fh >= 0) {
                             int runBit = fh & n;
                             Node<K,V> lastRun = f;
@@ -2491,10 +2523,11 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
                                     hn = new Node<K,V>(ph, pk, pv, hn);
                             }
                             setTabAt(nextTab, i, ln);
-                            setTabAt(nextTab, i + n, hn);
-                            setTabAt(tab, i, fwd);
+                            setTabAt(nextTab, i + n, hn); //为什么直接设置为i+n,见文章画图说明
+                            setTabAt(tab, i, fwd);      //迁移完毕设置为ForwardingNode节点，节点hash值设置为MOVED（-1）
                             advance = true;
                         }
+                        //红黑树迁移
                         else if (f instanceof TreeBin) {
                             TreeBin<K,V> t = (TreeBin<K,V>)f;
                             TreeNode<K,V> lo = null, loTail = null;
