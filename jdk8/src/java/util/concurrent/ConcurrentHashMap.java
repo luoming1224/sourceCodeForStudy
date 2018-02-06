@@ -2293,16 +2293,21 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
      * @param x the count to add
      * @param check if <0, don't check resize, if <= 1 only check if uncontended
      */
+    // 使用一个volatile类型的变量baseCount记录元素的个数，当插入新数据或则删除数据时，会通过addCount()方法更新baseCount，
     private final void addCount(long x, int check) {
+        // 更新baseCount
         CounterCell[] as; long b, s;
         if ((as = counterCells) != null ||
             !U.compareAndSwapLong(this, BASECOUNT, b = baseCount, s = b + x)) {
+            // 初始化时counterCells为空，在并发量很高时，如果存在两个线程同时执行CAS修改baseCount值，
+            // 则失败的线程会继续执行方法体中的逻辑，使用CounterCell记录元素个数的变化；
             CounterCell a; long v; int m;
             boolean uncontended = true;
             if (as == null || (m = as.length - 1) < 0 ||
                 (a = as[ThreadLocalRandom.getProbe() & m]) == null ||
                 !(uncontended =
                   U.compareAndSwapLong(a, CELLVALUE, v = a.value, v + x))) {
+                // 如果CounterCell数组为null或者大小为空数组；或者对应的数组元素为null；或者CAS设置元素值失败，则调用fullAddCount()
                 fullAddCount(x, uncontended);
                 return;
             }
@@ -2310,6 +2315,7 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
                 return;
             s = sumCount();
         }
+        // 判断是否需要扩容
         if (check >= 0) {
             Node<K,V>[] tab, nt; int n, sc;
             while (s >= (long)(sc = sizeCtl) && (tab = table) != null &&
@@ -2326,7 +2332,7 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
                 else if (U.compareAndSwapInt(this, SIZECTL, sc,
                                              (rs << RESIZE_STAMP_SHIFT) + 2))
                     transfer(tab, null);
-                s = sumCount();
+                s = sumCount(); //每次扩容后检查占用率是否需要进行再一次扩容，因为扩容滞后于添加元素。
             }
         }
     }
@@ -2593,6 +2599,7 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
     }
 
     // See LongAdder version for explanation
+    // 参考链接： http://www.importnew.com/23610.html
     private final void fullAddCount(long x, boolean wasUncontended) {
         int h;
         if ((h = ThreadLocalRandom.getProbe()) == 0) {
@@ -2638,6 +2645,7 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
                     collide = true;
                 else if (cellsBusy == 0 &&
                          U.compareAndSwapInt(this, CELLSBUSY, 0, 1)) {
+                    // 如果经常CAS设置值失败，则扩容CounterCell数组
                     try {
                         if (counterCells == as) {// Expand table unless stale
                             CounterCell[] rs = new CounterCell[n << 1];
@@ -2653,6 +2661,8 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
                 }
                 h = ThreadLocalRandom.advanceProbe(h);
             }
+            // 如果CounterCell数组counterCells为空，进行初始化，并插入对应的记录数
+            // 通过CAS设置cellsBusy字段，只有设置成功的线程才能初始化CounterCell数组
             else if (cellsBusy == 0 && counterCells == as &&
                      U.compareAndSwapInt(this, CELLSBUSY, 0, 1)) {
                 boolean init = false;
@@ -2669,6 +2679,8 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
                 if (init)
                     break;
             }
+            // 如果通过CAS设置cellsBusy字段失败的话，则继续尝试通过CAS修改baseCount字段，
+            // 如果修改baseCount字段成功的话，就退出循环，否则继续循环插入CounterCell对象；
             else if (U.compareAndSwapLong(this, BASECOUNT, v = baseCount, v + x))
                 break;                          // Fall back on using base
         }
