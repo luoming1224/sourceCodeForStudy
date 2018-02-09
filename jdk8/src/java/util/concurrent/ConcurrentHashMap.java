@@ -813,7 +813,7 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
      */
     /**
      * sizeCtl是控制标识符，在不同的阶段，其值代表不同的意义
-     * （1）负数代表正在进行初始化或扩容操作 ,其中-1代表正在初始化 ,-N 表示有N-1个线程正在进行扩容操作
+     * （1）负数代表正在进行初始化或扩容操作 ,其中-1代表正在初始化;表示扩容时，低16位的值N 表示有N-1个线程正在进行扩容操作（具体含义在扩容时介绍）
      * （2）table == null时，表示创建table时的初始化大小，默认初始化值是0
      * （3）table初始化后，表示触发下一次扩容操作的table容量阈值（大于该阈值时需要扩容）
      */
@@ -2216,13 +2216,15 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
                         ((ek = e.key) == k || (ek != null && k.equals(ek))))
                         return e;
                     if (eh < 0) {
+                        // 如果为ForwardingNode，则重新从outer位置开始
                         if (e instanceof ForwardingNode) {
                             tab = ((ForwardingNode<K,V>)e).nextTable;
                             continue outer;
                         }
                         else
-                            return e.find(h, k);
+                            return e.find(h, k);//如果不为ForwardingNode，则可能为TreeBin等节点，具体见get()函数分析
                     }
+                    // 遍历链表中下一个节点
                     if ((e = e.next) == null)
                         return null;
                 }
@@ -2262,7 +2264,7 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
     private final Node<K,V>[] initTable() {
         Node<K,V>[] tab; int sc;
         while ((tab = table) == null || tab.length == 0) {
-            if ((sc = sizeCtl) < 0)             //如果sizeCtl为负数，则说明已经有其它线程正在进行扩容，
+            if ((sc = sizeCtl) < 0)             //如果sizeCtl为负数，则说明已经有其它线程正在进行初始化，
                 Thread.yield(); // lost initialization race; just spin
             //初始化table之前，利用CAS将sizeCtl设置为-1，表示当前已有线程正在初始化，保证只有一个线程能够执行table初始化
             else if (U.compareAndSwapInt(this, SIZECTL, sc, -1)) {
@@ -2318,10 +2320,11 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
         // 判断是否需要扩容
         if (check >= 0) {
             Node<K,V>[] tab, nt; int n, sc;
+            // 如果table中key数量大于等于阈值，且table!=null，且当前容量小于最大容量值，则扩容
             while (s >= (long)(sc = sizeCtl) && (tab = table) != null &&
                    (n = tab.length) < MAXIMUM_CAPACITY) {
                 int rs = resizeStamp(n);
-                if (sc < 0) {
+                if (sc < 0) {   //表示有其他线程正在扩容，则检查是否需要辅助扩容
                     if ((sc >>> RESIZE_STAMP_SHIFT) != rs || sc == rs + 1 ||
                         sc == rs + MAX_RESIZERS || (nt = nextTable) == null ||
                         transferIndex <= 0)
@@ -2602,6 +2605,7 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
     // 参考链接： http://www.importnew.com/23610.html
     private final void fullAddCount(long x, boolean wasUncontended) {
         int h;
+        // 初始时ThreadLocalRandom.getProbe()为0
         if ((h = ThreadLocalRandom.getProbe()) == 0) {
             ThreadLocalRandom.localInit();      // force initialization
             h = ThreadLocalRandom.getProbe();
@@ -2610,8 +2614,10 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
         boolean collide = false;                // True if last slot nonempty
         for (;;) {
             CounterCell[] as; CounterCell a; int n; long v;
+            // 如果counterCells不为null，则找一个数组位置，在其元素CounterCell对象中记录元素计数
             if ((as = counterCells) != null && (n = as.length) > 0) {
-                if ((a = as[(n - 1) & h]) == null) {
+                if ((a = as[(n - 1) & h]) == null) {    // 由于CounterCell数组大小n始终为2的幂次方，所以用(n-1)&h替代h%n
+                    // 如果插入位置的CounterCell对象为null，则CAS修改cellsBusy，修改成功则插入一个对象保存计数，保证线程安全
                     if (cellsBusy == 0) {            // Try to attach new Cell
                         CounterCell r = new CounterCell(x); // Optimistic create
                         if (cellsBusy == 0 &&
@@ -2637,6 +2643,7 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
                 }
                 else if (!wasUncontended)       // CAS already known to fail
                     wasUncontended = true;      // Continue after rehash
+                // 如果对应的位置存在CounterCell对象，则CAS修改计数，修改成功则返回
                 else if (U.compareAndSwapLong(a, CELLVALUE, v = a.value, v + x))
                     break;
                 else if (counterCells != as || n >= NCPU)
@@ -2662,7 +2669,7 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
                 h = ThreadLocalRandom.advanceProbe(h);
             }
             // 如果CounterCell数组counterCells为空，进行初始化，并插入对应的记录数
-            // 通过CAS设置cellsBusy字段，只有设置成功的线程才能初始化CounterCell数组
+            // 通过CAS设置cellsBusy字段，只有设置成功的线程才能初始化CounterCell数组，保证并发安全
             else if (cellsBusy == 0 && counterCells == as &&
                      U.compareAndSwapInt(this, CELLSBUSY, 0, 1)) {
                 boolean init = false;
@@ -2792,7 +2799,7 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
     }
 
     //ConcurrentHashMap链表转树时，并不会直接转，
-    //正如注释（Nodes for use in TreeBins）所说，只是把这些节点包装成TreeNode放到TreeBin中，
+    //正如注释（Nodes for use in TreeBins）所说，只是把这些链表节点包装成TreeNode放到TreeBin中，
     //再由TreeBin来转化红黑树
     //TreeBin用于封装维护TreeNode，当链表转树时，用于封装TreeNode，也就是说，ConcurrentHashMap的红黑树存放的时TreeBin，而不是treeNode。
     /* ---------------- TreeBins -------------- */
