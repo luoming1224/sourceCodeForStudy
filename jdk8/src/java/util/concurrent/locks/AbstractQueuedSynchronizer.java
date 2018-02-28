@@ -1595,6 +1595,9 @@ public abstract class AbstractQueuedSynchronizer
      *    可能刚开始为当前线程，判断完state==0后，切换为另一个线程，另一个线程获取到锁，设置为Head为自己后，切换回来
      * 参考 http://blog.csdn.net/tomato__/article/details/25782747
      */
+    // 两种情况视为队列空
+    // （1）head == tail
+    // （2）head.next.thread == Thread.currentThread()
     public final boolean hasQueuedPredecessors() {
         // The correctness of this depends on head being initialized
         // before tail and on head.next being accurate if the current

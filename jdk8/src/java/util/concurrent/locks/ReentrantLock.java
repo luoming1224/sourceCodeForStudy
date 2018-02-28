@@ -129,12 +129,15 @@ public class ReentrantLock implements Lock, java.io.Serializable {
         final boolean nonfairTryAcquire(int acquires) {
             final Thread current = Thread.currentThread();
             int c = getState();
+            // state == 0表示当前锁处于空闲状态，CAS操作修改state值，修改成功则表示获取锁成功
             if (c == 0) {
                 if (compareAndSetState(0, acquires)) {
                     setExclusiveOwnerThread(current);
                     return true;
                 }
             }
+            // 如果锁非空闲，但当前占有锁的线程即为当前线程本身，增加state的值，同样获得锁
+            // 这里说明ReentrantLock为可重入锁
             else if (current == getExclusiveOwnerThread()) {
                 int nextc = c + acquires;
                 if (nextc < 0) // overflow
@@ -150,6 +153,7 @@ public class ReentrantLock implements Lock, java.io.Serializable {
             if (Thread.currentThread() != getExclusiveOwnerThread())
                 throw new IllegalMonitorStateException();
             boolean free = false;
+            // c == 0 表示锁被当前线程完全释放，处于空闲状态
             if (c == 0) {
                 free = true;
                 setExclusiveOwnerThread(null);
@@ -202,7 +206,9 @@ public class ReentrantLock implements Lock, java.io.Serializable {
          * Performs lock.  Try immediate barge, backing up to normal
          * acquire on failure.
          */
+        // 非公平获取锁操作，
         final void lock() {
+            // 不管是否有线程在排队获取锁，先直接CAS操作尝试修改state的值，修改成功则获得锁
             if (compareAndSetState(0, 1))
                 setExclusiveOwnerThread(Thread.currentThread());
             else
@@ -231,6 +237,7 @@ public class ReentrantLock implements Lock, java.io.Serializable {
         protected final boolean tryAcquire(int acquires) {
             final Thread current = Thread.currentThread();
             int c = getState();
+            // 如果锁空闲，并且同步等待队列中无其他线程在排队，则尝试获取锁
             if (c == 0) {
                 if (!hasQueuedPredecessors() &&
                     compareAndSetState(0, acquires)) {
@@ -238,6 +245,7 @@ public class ReentrantLock implements Lock, java.io.Serializable {
                     return true;
                 }
             }
+            //当前占有锁的线程即为当前线程本身，增加state的值，同样获得锁（可重入）
             else if (current == getExclusiveOwnerThread()) {
                 int nextc = c + acquires;
                 if (nextc < 0)
