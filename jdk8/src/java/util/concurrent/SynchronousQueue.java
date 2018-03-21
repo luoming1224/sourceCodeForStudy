@@ -488,6 +488,7 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
          * Returns true if node s is at head or there is an active
          * fulfiller.
          */
+        // s是栈顶节点，或者栈顶节点不存在，或者栈顶节点正在匹配
         boolean shouldSpin(SNode s) {
             SNode h = head;
             return (h == s || h == null || isFulfilling(h.mode));

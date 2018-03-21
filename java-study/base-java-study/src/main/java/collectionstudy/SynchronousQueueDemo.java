@@ -5,7 +5,7 @@ import java.util.concurrent.TimeUnit;
 
 public class SynchronousQueueDemo {
     public static void main(String[] args) {
-        test02();
+        test04();
 
     }
 
@@ -16,10 +16,18 @@ public class SynchronousQueueDemo {
             @Override
             public void run() {
                 System.out.println("put thread start");
-                try {
+                /*try {
                     queue.put(1);
                 } catch (InterruptedException e) {
+                }*/
+//                queue.offer(1);
+                queue.poll();
+                try {
+                    Thread.sleep(3000);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
                 }
+                System.out.println("poll data: " + queue.poll());
                 System.out.println("put thread end");
             }
         });
@@ -29,7 +37,8 @@ public class SynchronousQueueDemo {
             public void run() {
                 System.out.println("take thread start");
                 try {
-                    System.out.println("take from putThread: " + queue.take());
+                    queue.put(1);
+//                    System.out.println("take from putThread: " + queue.put(1););
                 } catch (InterruptedException e) {
                 }
                 System.out.println("take thread end");
@@ -148,5 +157,41 @@ public class SynchronousQueueDemo {
         } catch (InterruptedException e) {
             e.printStackTrace();
         }
+    }
+
+    private static void test04() {
+        final SynchronousQueue<Integer> queue = new SynchronousQueue<Integer>();
+
+        Thread putThread = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    Thread.sleep(50);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+                System.out.println("put thread start");
+                for (int i = 0; i < 100; ++i) {
+                    System.out.println("poll data: " + queue.poll());
+                }
+
+                System.out.println("put thread end");
+            }
+        });
+
+        Thread takeThread = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                System.out.println("take thread start");
+               for (int i = 0; i < 100; ++i){
+                   queue.offer(i);
+               }
+                System.out.println("take thread end");
+            }
+        });
+
+        putThread.start();
+
+        takeThread.start();
     }
 }
