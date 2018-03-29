@@ -286,8 +286,9 @@ public class PriorityBlockingQueue<E> extends AbstractQueue<E>
      * @param oldCap the length of the array
      */
     private void tryGrow(Object[] array, int oldCap) {
-        lock.unlock(); // must release and then re-acquire main lock
+        lock.unlock(); // must release and then re-acquire main lock  释放锁，其他线程可以执行插入数据之外的其他操作
         Object[] newArray = null;
+        // CAS操作保证只有一个线程能够执行扩容操作
         if (allocationSpinLock == 0 &&
             UNSAFE.compareAndSwapInt(this, allocationSpinLockOffset,
                                      0, 1)) {
@@ -481,6 +482,7 @@ public class PriorityBlockingQueue<E> extends AbstractQueue<E>
         lock.lock();
         int n, cap;
         Object[] array;
+        // 注意这里用的while循环，因为可能扩容还没有完成，其他线程多次获得线程调度权得到执行
         while ((n = size) >= (cap = (array = queue).length))
             tryGrow(array, cap);
         try {

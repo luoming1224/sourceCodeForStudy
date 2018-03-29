@@ -214,6 +214,8 @@ public class LinkedHashMap<K,V>
      *
      * @serial
      */
+    // LinkedHashMap 维护着一个运行于所有条目的双向链表。此链表定义了迭代顺序，该迭代顺序可以是插入顺序或者是访问顺序。
+    // 如果accessOrder = true，表示链表维持访问顺序；如果accessOrder = false，表示链表维持插入顺序；默认为插入顺序
     final boolean accessOrder;
 
     // internal utilities
@@ -252,6 +254,7 @@ public class LinkedHashMap<K,V>
         head = tail = null;
     }
 
+    // 生成一个Entry对象，并加入双向链表尾部
     Node<K,V> newNode(int hash, K key, V value, Node<K,V> e) {
         LinkedHashMap.Entry<K,V> p =
             new LinkedHashMap.Entry<K,V>(hash, key, value, e);
@@ -280,6 +283,7 @@ public class LinkedHashMap<K,V>
         return t;
     }
 
+    // 这个函数是在移除节点后调用的，就是将节点从双向链表中删除。
     void afterNodeRemoval(Node<K,V> e) { // unlink
         LinkedHashMap.Entry<K,V> p =
             (LinkedHashMap.Entry<K,V>)e, b = p.before, a = p.after;
@@ -302,6 +306,8 @@ public class LinkedHashMap<K,V>
         }
     }
 
+    // 如果accessOrder=true，即LinkedHashMap定义为访问顺序，则每访问map中的一个节点时都需要更新链表，将该节点移到双向链表的尾部
+    // 所有的操作均为简单的双向链表指针操作，可以画图帮助理解
     void afterNodeAccess(Node<K,V> e) { // move node to last
         LinkedHashMap.Entry<K,V> last;
         if (accessOrder && (last = tail) != e) {
@@ -435,6 +441,8 @@ public class LinkedHashMap<K,V>
      * The {@link #containsKey containsKey} operation may be used to
      * distinguish these two cases.
      */
+    // put函数在LinkedHashMap中没有实现，继承于父类HashMap
+    // get函数则重新实现病加入了afterNodeAccess来保证访问顺序
     public V get(Object key) {
         Node<K,V> e;
         if ((e = getNode(hash(key), key)) == null)

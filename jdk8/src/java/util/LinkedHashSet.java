@@ -121,6 +121,9 @@ public class LinkedHashSet<E>
 
     private static final long serialVersionUID = -2851667679971038690L;
 
+    // LinkedHashSet 通过继承 HashSet，底层使用 LinkedHashMap，以很简单明了的方式来实现了其自身的所有功能。
+    // 构造函数中使用super去调用父类HashSet的构造函数，父类中有一个专门为LinkedHashSet设计的构造函数，其中调用的是LinkedHashMap
+
     /**
      * Constructs a new, empty linked hash set with the specified initial
      * capacity and load factor.
