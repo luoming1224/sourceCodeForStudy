@@ -5,7 +5,7 @@ public class MergeTwoSortedLists {
         if (l1 == null || l2 == null) {
             return (l1 == null) ? l2 : l1;
         }
-        ListNode l1a = l1.next, l2a = l2.next;
+
         ListNode dummy = new ListNode(0);
         ListNode head = dummy;
         do {
