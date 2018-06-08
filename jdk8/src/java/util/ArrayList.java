@@ -843,9 +843,15 @@ public class ArrayList<E> extends AbstractList<E>
     /**
      * An optimized version of AbstractList.Itr
      */
+    // fail-fast iterator
+    // https://www.cnblogs.com/shamo89/p/6685216.html
     private class Itr implements Iterator<E> {
         int cursor;       // index of next element to return
         int lastRet = -1; // index of last element returned; -1 if no such
+        // 修改数的记录值。
+        // 每次新建Itr()对象时，都会保存新建该对象时对应的modCount；
+        // 以后每次遍历List中的元素的时候，都会比较expectedModCount和modCount是否相等；
+        // 若不相等，则抛出ConcurrentModificationException异常，产生fail-fast事件。
         int expectedModCount = modCount;
 
         Itr() {}
@@ -856,6 +862,8 @@ public class ArrayList<E> extends AbstractList<E>
 
         @SuppressWarnings("unchecked")
         public E next() {
+            // 获取下一个元素之前，都会判断“新建Itr对象时保存的modCount”和“当前的modCount”是否相等；
+            // 若不相等，则抛出ConcurrentModificationException异常，产生fail-fast事件。
             checkForComodification();
             int i = cursor;
             if (i >= size)
@@ -873,9 +881,9 @@ public class ArrayList<E> extends AbstractList<E>
             checkForComodification();
 
             try {
-                ArrayList.this.remove(lastRet);
+                ArrayList.this.remove(lastRet); //移除上一次返回的元素
                 cursor = lastRet;
-                lastRet = -1;
+                lastRet = -1;                   //意味着不能连续调用两次remove()
                 expectedModCount = modCount;
             } catch (IndexOutOfBoundsException ex) {
                 throw new ConcurrentModificationException();

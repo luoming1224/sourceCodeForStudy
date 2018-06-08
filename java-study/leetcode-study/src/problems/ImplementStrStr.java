@@ -38,7 +38,7 @@ public class ImplementStrStr {
         }
     }
 
-    public static int strStr(String haystack, String needle) {
+    public static int strStr_kmp(String haystack, String needle) {
         if (haystack == null || needle == null) {
             return -1;
         }
@@ -55,9 +55,36 @@ public class ImplementStrStr {
         return kmpSearch(strHaystack, strNeedle, next);
     }
 
+    public static int strStr(String haystack, String needle) {
+        if (needle.length() == 0)
+            return 0;
+        char first = needle.charAt(0);
+        int max = haystack.length() - needle.length();
+        for (int i = 0; i <= max; i++) {
+            if (haystack.charAt(i) != first) {
+                while (++i <= max && haystack.charAt(i) != first);
+            }
+
+            if (i <= max) {
+                int j = i + 1;
+                int end = j + needle.length() - 1;
+                for (int k = 1; j < end && haystack.charAt(j) == needle.charAt(k); j++, k++);
+
+                if (j == end) {
+                    return i;
+                }
+            }
+        }
+        return -1;
+    }
+
     public static void main(String[] args) {
-//        String haystack = "hello", needle = "ll";
-        String haystack = "", needle = "";
-        System.out.println(strStr(haystack, needle));
+
+        System.out.println( Math.abs(Integer.MIN_VALUE)  );
+
+
+        String haystack = "", needle = "lloo";
+//        String haystack = "", needle = "";
+//        System.out.println(strStr(haystack, needle));
     }
 }

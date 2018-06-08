@@ -1128,6 +1128,7 @@ public class CopyOnWriteArrayList<E>
             (getArray(), Spliterator.IMMUTABLE | Spliterator.ORDERED);
     }
 
+    // fail-safe iterator
     static final class COWIterator<E> implements ListIterator<E> {
         /** Snapshot of the array */
         private final Object[] snapshot;
