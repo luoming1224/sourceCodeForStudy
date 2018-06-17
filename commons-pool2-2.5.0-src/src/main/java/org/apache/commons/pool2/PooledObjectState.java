@@ -23,17 +23,17 @@ package org.apache.commons.pool2;
  */
 public enum PooledObjectState {
     /**
-     * In the queue, not in use.
+     * In the queue, not in use.    位于队列中，未使用
      */
     IDLE,
 
     /**
-     * In use.
+     * In use.      在使用
      */
     ALLOCATED,
 
     /**
-     * In the queue, currently being tested for possible eviction.
+     * In the queue, currently being tested for possible eviction.　位于队列中，当前正在测试，可能被回收（驱逐）
      */
     EVICTION,
 
@@ -48,7 +48,7 @@ public enum PooledObjectState {
     EVICTION_RETURN_TO_HEAD,
 
     /**
-     * In the queue, currently being validated.
+     * In the queue, currently being validated.　位于队列中，当前正在验证
      */
     VALIDATION,
 
@@ -70,17 +70,17 @@ public enum PooledObjectState {
 
     /**
      * Failed maintenance (e.g. eviction test or validation) and will be / has
-     * been destroyed
+     * been destroyed　回收测试或者验证失败，将销毁
      */
     INVALID,
 
     /**
-     * Deemed abandoned, to be invalidated.
+     * Deemed abandoned, to be invalidated.　被视为被遗弃的，被宣告无效
      */
     ABANDONED,
 
     /**
-     * Returning to the pool.
+     * Returning to the pool.　返回到池中
      */
     RETURNING
 }

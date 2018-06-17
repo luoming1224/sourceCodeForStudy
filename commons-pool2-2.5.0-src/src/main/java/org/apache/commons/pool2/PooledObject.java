@@ -21,14 +21,15 @@ import java.util.Deque;
 
 /**
  * Defines the wrapper that is used to track the additional information, such as
- * state, for the pooled objects.
+ * state, for the pooled objects. 定义用于跟踪附加信息的包装器,如用于池对象的状态。
  * <p>
  * Implementations of this class are required to be thread-safe.
  *
- * @param <T> the type of object in the pool
+ * @param <T> the type of object in the pool 包装的对象类型
  *　
  * @since 2.0
  */
+// 池对象，将需要放入对象池的对象包装添加一些附加信息．用于封装对象（如：线程/数据库连接/TCP连接）
 public interface PooledObject<T> extends Comparable<PooledObject<T>> {
 
     /**

@@ -63,11 +63,12 @@ package org.apache.commons.pool2;
  * they manage.
  *
  * @param <T> Type of element managed in this factory.
- *
+ *　
  * @see ObjectPool
  *
  * @since 2.0
  */
+// 池对象工厂，负责池对象的创建和销毁，必须实现线程安全
 public interface PooledObjectFactory<T> {
   /**
    * Create an instance that can be served by the pool and wrap it in a
@@ -78,7 +79,7 @@ public interface PooledObjectFactory<T> {
    * @throws Exception if there is a problem creating a new instance,
    *    this will be propagated to the code requesting an object.
    */
-  PooledObject<T> makeObject() throws Exception;
+  PooledObject<T> makeObject() throws Exception; //创建对象的方法
 
   /**
    * Destroys an instance no longer needed by the pool.
@@ -99,7 +100,7 @@ public interface PooledObjectFactory<T> {
    * @see #validateObject
    * @see ObjectPool#invalidateObject
    */
-  void destroyObject(PooledObject<T> p) throws Exception;
+  void destroyObject(PooledObject<T> p) throws Exception; //销毁对象的方法
 
   /**
    * Ensures that the instance is safe to be returned by the pool.
@@ -109,7 +110,7 @@ public interface PooledObjectFactory<T> {
    * @return <code>false</code> if <code>obj</code> is not valid and should
    *         be dropped from the pool, <code>true</code> otherwise.
    */
-  boolean validateObject(PooledObject<T> p);
+  boolean validateObject(PooledObject<T> p); //校验对象有消息的方法
 
   /**
    * Reinitialize an instance to be returned by the pool.
@@ -121,7 +122,7 @@ public interface PooledObjectFactory<T> {
    *
    * @see #destroyObject
    */
-  void activateObject(PooledObject<T> p) throws Exception;
+  void activateObject(PooledObject<T> p) throws Exception; //激活对象的方法
 
   /**
    * Uninitialize an instance to be returned to the idle object pool.
@@ -133,5 +134,5 @@ public interface PooledObjectFactory<T> {
    *
    * @see #destroyObject
    */
-  void passivateObject(PooledObject<T> p) throws Exception;
+  void passivateObject(PooledObject<T> p) throws Exception; //钝化对象的方法
 }

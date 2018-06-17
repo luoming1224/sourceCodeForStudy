@@ -57,7 +57,8 @@ public abstract class BaseGenericObjectPool<T> extends BaseObject {
     // Constants
     /**
      * The size of the caches used to store historical data for some attributes
-     * so that rolling means may be calculated.
+     * so that rolling means may be calculated.　
+     * 用于存储一些属性的历史数据的缓存大小，该缓存以便可以滚动计算平均值
      */
     public static final int MEAN_TIMING_STATS_CACHE_SIZE = 100;
 
@@ -724,6 +725,7 @@ public abstract class BaseGenericObjectPool<T> extends BaseObject {
      *
      * @param delay time in milliseconds before start and between eviction runs
      */
+    //同步机制保证初始化过程
     final void startEvictor(final long delay) {
         synchronized (evictionLock) {
             if (null != evictor) {
@@ -1054,8 +1056,10 @@ public abstract class BaseGenericObjectPool<T> extends BaseObject {
          * any actions taken are under the class loader of the factory
          * associated with the pool.
          */
+        // 空闲对象的淘汰任务
         @Override
         public void run() {
+            // 保存当前环境的classLoader
             final ClassLoader savedClassLoader =
                     Thread.currentThread().getContextClassLoader();
             try {
@@ -1083,13 +1087,14 @@ public abstract class BaseGenericObjectPool<T> extends BaseObject {
                     oome.printStackTrace(System.err);
                 }
                 // Re-create idle instances.
+                // 确保空闲池中的空闲对象数满足设置的池参数minIdle，少于该值则创建对象放入空闲池中   ********很重要的一步操作
                 try {
                     ensureMinIdle();
                 } catch (final Exception e) {
                     swallowException(e);
                 }
             } finally {
-                // Restore the previous CCL
+                // Restore the previous CCL 恢复之前保存的当前环境classLoader
                 Thread.currentThread().setContextClassLoader(savedClassLoader);
             }
         }
@@ -1177,6 +1182,8 @@ public abstract class BaseGenericObjectPool<T> extends BaseObject {
          * Create an EvictionIterator for the provided idle instance deque.
          * @param idleObjects underlying deque
          */
+        // getLifo()返回空闲池当作一个队列还是栈来使用，默认返回true，即当作栈来使用
+        //　当作栈的话，总是从空闲池中返回最近使用的对象（队列尾部对象）；当作队列的话，总是返回队列中最久的那个对象(队列头部对象)
         EvictionIterator(final Deque<PooledObject<T>> idleObjects) {
             this.idleObjects = idleObjects;
 
@@ -1222,6 +1229,8 @@ public abstract class BaseGenericObjectPool<T> extends BaseObject {
      * objects under management using maps keyed on the objects. This wrapper
      * class ensures that objects can work as hash keys.
      *
+     * GenericObjectPool 和 GenericKeyedObjectPool通过用maps维护着对象池管理的所有对象的引用，并且以对象作为map的key
+     * 这个包装类确保对象可以作为哈希键工作。
      * @param <T> type of objects in the pool
      */
     static class IdentityWrapper<T> {
@@ -1237,6 +1246,8 @@ public abstract class BaseGenericObjectPool<T> extends BaseObject {
             this.instance = instance;
         }
 
+        // https://www.jianshu.com/p/ebf4d0b142ac hashCode和identityHashCode的区别
+        // hashCode方法可以被重写并返回重写后的值，identityHashCode会返回对象的hash值而不管对象是否重写了hashCode方法。
         @Override
         public int hashCode() {
             return System.identityHashCode(instance);

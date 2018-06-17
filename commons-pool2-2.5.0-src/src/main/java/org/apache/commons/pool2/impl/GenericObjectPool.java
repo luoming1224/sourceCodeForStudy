@@ -94,6 +94,7 @@ public class GenericObjectPool<T> extends BaseGenericObjectPool<T>
      *
      * @param factory   The object factory to be used to create object instances
      *                  used by this pool
+     *                  为对象池创建对象实例，如在Jedis中，为JedisFactory，创建Jedis对象
      * @param config    The configuration to use for this pool instance. The
      *                  configuration is used by value. Subsequent changes to
      *                  the configuration object will not be reflected in the
@@ -110,11 +111,11 @@ public class GenericObjectPool<T> extends BaseGenericObjectPool<T>
         }
         this.factory = factory;
 
-        idleObjects = new LinkedBlockingDeque<>(config.getFairness());
+        idleObjects = new LinkedBlockingDeque<>(config.getFairness()); //初始化空闲对象池，传入锁的模式，公平还是非公平，默认是非公平锁（默认值在BaseObjectPoolConfig）
 
-        setConfig(config);
+        setConfig(config); //参数设置，默认值定义于GenericObjectPoolConfig（继承于BaseObjectPoolConfig）
 
-        startEvictor(getTimeBetweenEvictionRunsMillis());
+        startEvictor(getTimeBetweenEvictionRunsMillis()); //开启淘汰机制，timeBetweenEvictionRunsMillis为淘汰的间隔，只有该值大于０才开启淘汰机制
     }
 
     /**
@@ -407,8 +408,10 @@ public class GenericObjectPool<T> extends BaseGenericObjectPool<T>
      * @throws Exception if an object instance cannot be returned due to an
      *                   error
      */
+    // 参考链接　https://www.jianshu.com/p/b49452fb3a67
+    //参数为maxWaitMillis，如果设置了blockWhenExhausted为true，即该参数为从池中拿不到对象时等待的最大时间
     public T borrowObject(final long borrowMaxWaitMillis) throws Exception {
-        assertOpen();
+        assertOpen(); //检查池未关闭
 
         final AbandonedConfig ac = this.abandonedConfig;
         if (ac != null && ac.getRemoveAbandonedOnBorrow() &&
@@ -421,6 +424,7 @@ public class GenericObjectPool<T> extends BaseGenericObjectPool<T>
 
         // Get local copy of current config so it is consistent for entire
         // method execution
+        // 当资源池耗尽的时候是否阻塞
         final boolean blockWhenExhausted = getBlockWhenExhausted();
 
         boolean create;
@@ -428,7 +432,7 @@ public class GenericObjectPool<T> extends BaseGenericObjectPool<T>
 
         while (p == null) {
             create = false;
-            p = idleObjects.pollFirst();
+            p = idleObjects.pollFirst(); //从空闲队列取一个对象
             if (p == null) {
                 p = create();
                 if (p != null) {
@@ -453,12 +457,15 @@ public class GenericObjectPool<T> extends BaseGenericObjectPool<T>
                     throw new NoSuchElementException("Pool exhausted");
                 }
             }
+            // 判断当前对象的状态是否为IDLE，如果是设置为ALLOCATED;
+            // 如果状态是EVICTION(正在淘汰),设置为EVICTION_RETURN_TO_HEAD，并且返回false，放弃使用该对象，有可能会被淘汰
             if (!p.allocate()) {
                 p = null;
             }
 
             if (p != null) {
                 try {
+                    //激活对象，由对象创建工厂实现
                     factory.activateObject(p);
                 } catch (final Exception e) {
                     try {
@@ -474,6 +481,7 @@ public class GenericObjectPool<T> extends BaseGenericObjectPool<T>
                         throw nsee;
                     }
                 }
+                //这里主要是获取testOnBorrow和testOnCreate,那么在对象是从idle池中取出来的或者是新创建的要进行Test
                 if (p != null && (getTestOnBorrow() || create && getTestOnCreate())) {
                     boolean validate = false;
                     Throwable validationThrowable = null;
@@ -502,6 +510,7 @@ public class GenericObjectPool<T> extends BaseGenericObjectPool<T>
             }
         }
 
+        //更新一些统计信息
         updateStatsBorrow(p, System.currentTimeMillis() - waitTime);
 
         return p.getObject();
@@ -523,6 +532,7 @@ public class GenericObjectPool<T> extends BaseGenericObjectPool<T>
      */
     @Override
     public void returnObject(final T obj) {
+        // ConcurrentHashMap维护了所有的对象，而IDLE队列只是维护空闲的对象。
         final PooledObject<T> p = allObjects.get(new IdentityWrapper<>(obj));
 
         if (p == null) {
@@ -535,15 +545,18 @@ public class GenericObjectPool<T> extends BaseGenericObjectPool<T>
 
         synchronized(p) {
             final PooledObjectState state = p.getState();
+            //确定返回的对象都是ALLOCATED状态的，因为从idlePool借出的时候，都会从IDLE状态标记为ALLOCATED状态
             if (state != PooledObjectState.ALLOCATED) {
                 throw new IllegalStateException(
                         "Object has already been returned to this pool or is invalid");
             }
+            // 将状态标记为RETURNING（正在返回空闲池中）
             p.markReturning(); // Keep from being marked abandoned
         }
 
-        final long activeTime = p.getActiveTimeMillis();
+        final long activeTime = p.getActiveTimeMillis(); // 计算该对象从被借走使用的时间
 
+        //判断在对象返回的时候是否需要Test
         if (getTestOnReturn()) {
             if (!factory.validateObject(p)) {
                 try {
@@ -561,6 +574,7 @@ public class GenericObjectPool<T> extends BaseGenericObjectPool<T>
             }
         }
 
+        // 钝化，由具体对象创建工厂实现，在JedisFactory中该函数体为空
         try {
             factory.passivateObject(p);
         } catch (final Exception e1) {
@@ -579,11 +593,15 @@ public class GenericObjectPool<T> extends BaseGenericObjectPool<T>
             return;
         }
 
+        // 将状态从RETURNING标记为IDLE
         if (!p.deallocate()) {
             throw new IllegalStateException(
                     "Object has already been returned to this pool or is invalid");
         }
 
+        // 逻辑与&& 优先级高于 逻辑或||
+        // 获取设置的最大空闲数
+        // 如果资源池被关闭了，或者空闲队列中空闲对象数量超过了设置的参数值，这直接销毁对象
         final int maxIdleSave = getMaxIdle();
         if (isClosed() || maxIdleSave > -1 && maxIdleSave <= idleObjects.size()) {
             try {
@@ -592,6 +610,8 @@ public class GenericObjectPool<T> extends BaseGenericObjectPool<T>
                 swallowException(e);
             }
         } else {
+            // 没有超出设置的允许最大空闲数，则返还空闲队列
+            // LIFO,默认为true，栈结构，返还时放在队列头部，否则放在队列尾部
             if (getLifo()) {
                 idleObjects.addFirst(p);
             } else {
@@ -716,44 +736,50 @@ public class GenericObjectPool<T> extends BaseGenericObjectPool<T>
      * Successive activations of this method examine objects in sequence,
      * cycling through objects in oldest-to-youngest order.
      */
+    // 默认EvictionPolicy为org.apache.commons.pool2.impl.DefaultEvictionPolicy
+    // 在默认配置文件BaseObjectPoolConfig中定义的
     @Override
     public void evict() throws Exception {
-        assertOpen();
+        assertOpen(); //检查池未关闭
 
         if (idleObjects.size() > 0) {
 
             PooledObject<T> underTest = null;
-            final EvictionPolicy<T> evictionPolicy = getEvictionPolicy();
+            final EvictionPolicy<T> evictionPolicy = getEvictionPolicy(); //默认淘汰策略为DefaultEvictionPolicy
 
             synchronized (evictionLock) {
+                //　淘汰的配置
                 final EvictionConfig evictionConfig = new EvictionConfig(
                         getMinEvictableIdleTimeMillis(),
                         getSoftMinEvictableIdleTimeMillis(),
                         getMinIdle());
 
-                final boolean testWhileIdle = getTestWhileIdle();
+                final boolean testWhileIdle = getTestWhileIdle(); //是否对空闲的连接进行Test
 
+                //getNumTests()　一次扫描多少个对象
                 for (int i = 0, m = getNumTests(); i < m; i++) {
                     if (evictionIterator == null || !evictionIterator.hasNext()) {
                         evictionIterator = new EvictionIterator(idleObjects);
                     }
                     if (!evictionIterator.hasNext()) {
-                        // Pool exhausted, nothing to do here
+                        // Pool exhausted, nothing to do here　空闲队列已经空了
                         return;
                     }
 
                     try {
                         underTest = evictionIterator.next();
                     } catch (final NoSuchElementException nsee) {
-                        // Object was borrowed in another thread
+                        // Object was borrowed in another thread  该对象被其他线程从池中借走
                         // Don't count this as an eviction test so reduce i;
                         i--;
                         evictionIterator = null;
                         continue;
                     }
 
+                    // 检查该对象当前的状态是否为空闲（PooledObjectState.IDLE），如果是,则设置为正在淘汰（PooledObjectState.EVICTION）,设置过程使用了synchronized
+                    // 如果不是，说明被其他线程借走，重新迭代从空闲池拿一个
                     if (!underTest.startEvictionTest()) {
-                        // Object was borrowed in another thread
+                        // Object was borrowed in another thread 该对象被其他线程从池中借走
                         // Don't count this as an eviction test so reduce i;
                         i--;
                         continue;
@@ -764,6 +790,7 @@ public class GenericObjectPool<T> extends BaseGenericObjectPool<T>
                     // killing the eviction thread.
                     boolean evict;
                     try {
+                        // 根据淘汰策略判断是否需要淘汰
                         evict = evictionPolicy.evict(evictionConfig, underTest,
                                 idleObjects.size());
                     } catch (final Throwable t) {
@@ -775,20 +802,25 @@ public class GenericObjectPool<T> extends BaseGenericObjectPool<T>
                         evict = false;
                     }
 
+                    //如果需要淘汰，则执行淘汰逻辑；
                     if (evict) {
                         destroy(underTest);
                         destroyedByEvictorCount.incrementAndGet();
                     } else {
+                        //如果不需要淘汰，如果设置了空闲时Test，则校验
                         if (testWhileIdle) {
                             boolean active = false;
                             try {
-                                factory.activateObject(underTest);
+                                //激活对象，如在JedisFactory中检查一下连接的redis数据库
+                                factory.activateObject(underTest); //具体的对象创建工厂实现
                                 active = true;
                             } catch (final Exception e) {
                                 destroy(underTest);
                                 destroyedByEvictorCount.incrementAndGet();
                             }
                             if (active) {
+                                //检查对象的有效性，具体的对象创建工厂实现
+                                // 如在JedisFactory中检查ip和port，然后给节点发送ping，检查是否正确收到节点返回的pong
                                 if (!factory.validateObject(underTest)) {
                                     destroy(underTest);
                                     destroyedByEvictorCount.incrementAndGet();
@@ -802,6 +834,7 @@ public class GenericObjectPool<T> extends BaseGenericObjectPool<T>
                                 }
                             }
                         }
+                        //对象没有被淘汰的话，将对象的状态重新设置为空闲PooledObjectState.IDLE(开始淘汰时设置为PooledObjectState.EVICTION)
                         if (!underTest.endEvictionTest(idleObjects)) {
                             // TODO - May need to add code here once additional
                             // states are used
@@ -860,6 +893,7 @@ public class GenericObjectPool<T> extends BaseGenericObjectPool<T>
                     // The pool is currently at capacity or in the process of
                     // making enough new objects to take it to capacity.
                     createCount.decrementAndGet();
+                    //正在创建的Object数目，正在创建的为0，说明资源池已经达到matTotal上限，所以无须继续创建对象
                     if (makeObjectCount == 0) {
                         // There are no makeObject() calls in progress so the
                         // pool is at capacity. Do not attempt to create a new
@@ -870,16 +904,19 @@ public class GenericObjectPool<T> extends BaseGenericObjectPool<T>
                         // bring the pool to capacity. Those calls might also
                         // fail so wait until they complete and then re-test if
                         // the pool is at capacity or not.
+                        // 当前正在创建的对象不为０，有线程在调用makeObject()函数创建对象，这些创建过程有可能失败，
+                        //　所以调用wait()等待，指导创建过程完成，再重新测试资源池是否达到maxTotal上限，即重新while循环
                         makeObjectCountLock.wait();
                     }
                 } else {
-                    // The pool is not at capacity. Create a new object.
+                    // The pool is not at capacity. Create a new object. 资源池还没有达到maxTotal上限，则创建对象
                     makeObjectCount++;
                     create = Boolean.TRUE;
                 }
             }
         }
 
+        //无须创建对象，则返回
         if (!create.booleanValue()) {
             return null;
         }
@@ -893,7 +930,7 @@ public class GenericObjectPool<T> extends BaseGenericObjectPool<T>
         } finally {
             synchronized (makeObjectCountLock) {
                 makeObjectCount--;
-                makeObjectCountLock.notifyAll();
+                makeObjectCountLock.notifyAll();  // 创建完毕，唤醒其他的等待线程
             }
         }
 
@@ -906,6 +943,12 @@ public class GenericObjectPool<T> extends BaseGenericObjectPool<T>
             }
         }
 
+        //增加创建的数量,将新创建的对象添加到Map中　　　createCount/createdCount区别
+        // createCount统计当前资源池中还存活的对象数量，所以该create()函数前面那该计数和maxTotal比较，在destroy()函数中，会减少该计数
+        // createdCount统计资源池从建立起创建过的对象总量，包括中间被destroy掉的对象;整个代码中没有减少该计数的语句（没有createdCount.decrementAndGet语句）
+
+        // 这里出现了一个allObjects，它是ConcurrentHashMap，新创建的对象不直接加入到idle队列中，而是加入到ConcurrentHashMap中，
+        // 只有在对象return的时候才返回到idle队列中。新创建的对象默认被标示为IDLE状态（在DefaultPooledObject中）
         createdCount.incrementAndGet();
         allObjects.put(new IdentityWrapper<>(p.getObject()), p);
         return p;
@@ -920,14 +963,15 @@ public class GenericObjectPool<T> extends BaseGenericObjectPool<T>
      *                   cleanly
      */
     private void destroy(final PooledObject<T> toDestroy) throws Exception {
-        toDestroy.invalidate();
-        idleObjects.remove(toDestroy);
-        allObjects.remove(new IdentityWrapper<>(toDestroy.getObject()));
+        toDestroy.invalidate(); //设置即将销毁的对象状态为无效(PooledObjectState.INVALID)
+        idleObjects.remove(toDestroy); //从空闲队列中将该对象移除
+        allObjects.remove(new IdentityWrapper<>(toDestroy.getObject()));// 从对象池中移除
         try {
-            factory.destroyObject(toDestroy);
+            factory.destroyObject(toDestroy); //调用对象创建工厂的销毁对象函数，由具体对象创建工厂实现；如JedisFactory中会断开到节点的连接等
         } finally {
+            //相应的调整统计计数
             destroyedCount.incrementAndGet();
-            createCount.decrementAndGet();
+            createCount.decrementAndGet(); // 减少还存活的对象计数
         }
     }
 
@@ -948,6 +992,7 @@ public class GenericObjectPool<T> extends BaseGenericObjectPool<T>
      * @param always true means create instances even if the pool has no threads waiting
      * @throws Exception if the factory's makeObject throws
      */
+    // 确保空闲池中的空闲对象数满足设置的池参数minIdle，少于该值则创建对象放入空闲池中
     private void ensureIdle(final int idleCount, final boolean always) throws Exception {
         if (idleCount < 1 || isClosed() || (!always && !idleObjects.hasTakeWaiters())) {
             return;
@@ -960,6 +1005,9 @@ public class GenericObjectPool<T> extends BaseGenericObjectPool<T>
                 // create will work. Give up.
                 break;
             }
+            // 空闲池使用栈结构的话，新创建的对象加入队列头部，因为确保从空闲池中拿对象时总是拿最近使用的对象
+            //　使用队列结构的话，新创建的对象加入队列尾部
+            //　默认是true，使用栈结构
             if (getLifo()) {
                 idleObjects.addFirst(p);
             } else {
@@ -1018,6 +1066,9 @@ public class GenericObjectPool<T> extends BaseGenericObjectPool<T>
      *
      * @return The number of objects to test for validity
      */
+    //一次淘汰策略的运行扫描多少个对象
+    //numTestsPerEvictionRun>=0，则取该值和空闲队列大小中较小的值
+    //否则，空闲队列大小/该值的绝对值
     private int getNumTests() {
         final int numTestsPerEvictionRun = getNumTestsPerEvictionRun();
         if (numTestsPerEvictionRun >= 0) {
@@ -1158,6 +1209,8 @@ public class GenericObjectPool<T> extends BaseGenericObjectPool<T>
      * #_maxActive}. Map keys are pooled objects, values are the PooledObject
      * wrappers used internally by the pool.
      */
+    // 存放池对象，即经过包装的对象
+    //　对象池中的所有对象
     private final Map<IdentityWrapper<T>, PooledObject<T>> allObjects =
         new ConcurrentHashMap<>();
     /*
@@ -1170,7 +1223,7 @@ public class GenericObjectPool<T> extends BaseGenericObjectPool<T>
     private final AtomicLong createCount = new AtomicLong(0);
     private long makeObjectCount = 0;
     private final Object makeObjectCountLock = new Object();
-    private final LinkedBlockingDeque<PooledObject<T>> idleObjects;
+    private final LinkedBlockingDeque<PooledObject<T>> idleObjects; //空闲对象
 
     // JMX specific attributes
     private static final String ONAME_BASE =

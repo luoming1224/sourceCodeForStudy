@@ -37,6 +37,8 @@ import org.apache.commons.pool2.PooledObject;
  *
  * @since 2.0
  */
+// 默认淘汰策略：（１）idleSoftEvictTime < 对象空闲时间 && minIdle < 空闲池数量；
+//    （２）idleEvictTime < 对象空闲时间 (满足此条件时会直接淘汰，不考虑池的最小空闲参数设置，不过在淘汰任务中后面检查该参数，如果少于，会重新创建对象)
 public class DefaultEvictionPolicy<T> implements EvictionPolicy<T> {
 
     @Override
