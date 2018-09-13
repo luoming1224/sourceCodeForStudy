@@ -1,0 +1,41 @@
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xmlns:context="http://www.springframework.org/schema/context"
+       xmlns:redisson="http://redisson.org/schema/redisson"
+       xsi:schemaLocation="
+       http://www.springframework.org/schema/beans
+       http://www.springframework.org/schema/beans/spring-beans.xsd
+       http://www.springframework.org/schema/context
+       http://www.springframework.org/schema/context/spring-context.xsd
+       http://redisson.org/schema/redisson
+       http://redisson.org/schema/redisson/redisson.xsd">
+    <bean id="stringCodec" class="org.redisson.client.codec.StringCodec"></bean>
+    <redisson:client id="standalone"
+                     name="aliasName1,aliasName2"
+                     codec-ref="stringCodec">
+        <redisson:single-server address="redis://172.25.45.240:6333"
+                                connection-pool-size="500"
+                                idle-connection-timeout="10000"
+                                connect-timeout="10000"
+                                timeout="3000"
+                                ping-timeout="30000"
+                                reconnection-timeout="30000"
+                                database="0"/>
+    </redisson:client>
+    <redisson:client id="cluster" codec-ref="stringCodec">
+        <redisson:cluster-servers
+                              idle-connection-timeout="10000"
+                              connect-timeout="10000"
+                              timeout="3000"
+                              ping-timeout="1000"
+                              reconnection-timeout="3000"
+                              >
+        <redisson:node-address value="redis://172.25.45.240:6333" />
+        <redisson:node-address value="redis://172.25.45.241:6795" />
+        <redisson:node-address value="redis://172.25.45.240:6399" />
+        <redisson:node-address value="redis://172.25.45.240:6400" />
+        <redisson:node-address value="redis://172.25.45.240:6401" />
+        <redisson:node-address value="redis://172.25.45.241:6541" />
+        </redisson:cluster-servers>
+    </redisson:client>
+</beans>
