@@ -1096,7 +1096,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     /* Update the time cache. */
     updateCachedTime();
 
-    server.hz = server.config_hz;
+    server.hz = server.config_hz;   //默认值为10
     /* Adapt the server.hz value to the number of configured clients. If we have
      * many clients, we want to call serverCron() with an higher frequency. */
     if (server.dynamic_hz) {
@@ -1221,9 +1221,10 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
         pid_t pid;
 
         if ((pid = wait3(&statloc,WNOHANG,NULL)) != 0) {
-            int exitcode = WEXITSTATUS(statloc);
+            int exitcode = WEXITSTATUS(statloc);  //获取退出码
             int bysignal = 0;
 
+            // 判断子进程是否因为信号而终止，是的话，取得子进程因信号而中止的信号码
             if (WIFSIGNALED(statloc)) bysignal = WTERMSIG(statloc);
 
             if (pid == -1) {
@@ -1233,10 +1234,10 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
                     (int) server.rdb_child_pid,
                     (int) server.aof_child_pid);
             } else if (pid == server.rdb_child_pid) {
-                backgroundSaveDoneHandler(exitcode,bysignal);
+                backgroundSaveDoneHandler(exitcode,bysignal);           // 将RDB文件写入磁盘或网络中
                 if (!bysignal && exitcode == 0) receiveChildInfo();
             } else if (pid == server.aof_child_pid) {
-                backgroundRewriteDoneHandler(exitcode,bysignal);
+                backgroundRewriteDoneHandler(exitcode,bysignal);        // 将重写缓冲区的命令追加AOF文件中，且进行同步操作
                 if (!bysignal && exitcode == 0) receiveChildInfo();
             } else {
                 if (!ldbRemoveChild(pid)) {
@@ -1274,6 +1275,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
         }
 
         /* Trigger an AOF rewrite if needed. */
+        /* 是否触发AOF重写 */
         if (server.aof_state == AOF_ON &&
             server.rdb_child_pid == -1 &&
             server.aof_child_pid == -1 &&
@@ -1293,6 +1295,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
 
     /* AOF postponed flush: Try at every cron cycle if the slow fsync
      * completed. */
+    // 将AOF缓存冲洗到磁盘中
     if (server.aof_flush_postponed_start) flushAppendOnlyFile(0);
 
     /* AOF write errors: in this case we have a buffer to flush as well and
@@ -1304,7 +1307,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
             flushAppendOnlyFile(0);
     }
 
-    /* Close clients that need to be closed asynchronous */
+    /* Close clients that need to be closed asynchronous */ // 释放被设置为异步释放的client
     freeClientsInAsyncFreeQueue();
 
     /* Clear the paused clients flag if needed. */
@@ -1348,7 +1351,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     }
 
     server.cronloops++;
-    return 1000/server.hz;
+    return 1000/server.hz;    // 返回定时器执行周期，默认为100ms
 }
 
 /* This function gets called every time Redis is entering the
@@ -2696,11 +2699,12 @@ int processCommand(client *c) {
     }
 
     /* Exec the command */
+    //client处于事务环境中,但是命令不是exec/discard/multi/watch,则添加到事务队列中
     if (c->flags & CLIENT_MULTI &&
         c->cmd->proc != execCommand && c->cmd->proc != discardCommand &&
         c->cmd->proc != multiCommand && c->cmd->proc != watchCommand)
     {
-        queueMultiCommand(c);
+        queueMultiCommand(c); //除了上述四个命令,其他的命令都添加到事务队列中
         addReply(c,shared.queued);
     } else {
         call(c,CMD_CALL_FULL);

@@ -133,6 +133,7 @@ typedef struct clusterNode {
     list *fail_reports;         /* List of nodes signaling this as failing */
 } clusterNode;
 
+// 保存当前节点视角下的集群状态
 typedef struct clusterState {
     clusterNode *myself;  /* This node */
     uint64_t currentEpoch;

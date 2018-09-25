@@ -1593,6 +1593,7 @@ void syncWithMaster(aeEventLoop *el, int fd, void *privdata, int mask) {
 
     /* If this event fired after the user turned the instance into a master
      * with SLAVEOF NO ONE we must just return ASAP. */
+    // 如果用户通过发送slaveof no one命令将该节点变为主节点，断开该节点作为从节点时建立的到主节点的连接，并且立即返回
     if (server.repl_state == REPL_STATE_NONE) {
         close(fd);
         return;
@@ -1609,6 +1610,7 @@ void syncWithMaster(aeEventLoop *el, int fd, void *privdata, int mask) {
     }
 
     /* Send a PING to check the master is able to reply without errors. */
+    // 如果处于REPL_STATE_CONNECTING状态，则发送一个PING命令检查主节点是否能够正常响应
     if (server.repl_state == REPL_STATE_CONNECTING) {
         serverLog(LL_NOTICE,"Non blocking connect for SYNC fired the event.");
         /* Delete the writable event so that the readable event remains
@@ -1623,6 +1625,7 @@ void syncWithMaster(aeEventLoop *el, int fd, void *privdata, int mask) {
     }
 
     /* Receive the PONG command. */
+    // 如果复制的状态为REPL_STATE_RECEIVE_PONG，等待接受PONG命令
     if (server.repl_state == REPL_STATE_RECEIVE_PONG) {
         err = sendSynchronousCommand(SYNC_CMD_READ,fd,NULL);
 
@@ -1672,6 +1675,8 @@ void syncWithMaster(aeEventLoop *el, int fd, void *privdata, int mask) {
 
     /* Set the slave port, so that Master's INFO command can list the
      * slave listening port correctly. */
+    // 从节点发送REPLCONF listening-port/ip-address 主节点调用replconfCommand函数处理
+    // 将从节点的ip和port保存进对应的client结构体slave_ip/slave_listening_port中
     if (server.repl_state == REPL_STATE_SEND_PORT) {
         sds port = sdsfromlonglong(server.slave_announce_port ?
             server.slave_announce_port : server.port);
@@ -1734,6 +1739,8 @@ void syncWithMaster(aeEventLoop *el, int fd, void *privdata, int mask) {
      * PSYNC2: supports PSYNC v2, so understands +CONTINUE <new repl ID>.
      *
      * The master will ignore capabilities it does not understand. */
+    // 从节点发送replconf capa命令，通知主节点从节点的能力，主节点调用replconfCommand函数处理，保存进client的slave_capa中
+    // 5.0版本redis支持eof（能够解析出RDB文件的EOF流格式。用于无盘复制的方式中。）和psync2（部分复制）
     if (server.repl_state == REPL_STATE_SEND_CAPA) {
         err = sendSynchronousCommand(SYNC_CMD_WRITE,fd,"REPLCONF",
                 "capa","eof","capa","psync2",NULL);
@@ -1762,6 +1769,7 @@ void syncWithMaster(aeEventLoop *el, int fd, void *privdata, int mask) {
      * and the global offset, to try a partial resync at the next
      * reconnection attempt. */
     if (server.repl_state == REPL_STATE_SEND_PSYNC) {
+        // 向主节点发送一个部分重同步命令PSYNC，参数0表示不读主节点的回复，只获取主节点的运行runid和全局复制偏移量
         if (slaveTryPartialResynchronization(fd,0) == PSYNC_WRITE_ERROR) {
             err = sdsnew("Write error sending the PSYNC command.");
             goto write_error;
@@ -1778,6 +1786,7 @@ void syncWithMaster(aeEventLoop *el, int fd, void *privdata, int mask) {
         goto error;
     }
 
+    // 那么尝试进行第二次部分重同步，从主节点读取指令来决定执行部分重同步还是全量同步
     psync_result = slaveTryPartialResynchronization(fd,1);
     if (psync_result == PSYNC_WAIT_REPLY) return; /* Try again later... */
 
@@ -1799,6 +1808,10 @@ void syncWithMaster(aeEventLoop *el, int fd, void *privdata, int mask) {
      * as well, if we have any sub-slaves. The master may transfer us an
      * entirely different data set and we have no way to incrementally feed
      * our slaves after that. */
+    /*
+     * 部分重同步失败或者不支持，则需要执行全量同步；如果当前节点也有子从节点，希望当前节点的从节点重新同步当前节点，所以断开从节点的连接
+     * 因为主节点可能会传输给我们一整个完全不同的数据集，我们没法对自身的子节点做增量同步
+     * */
     disconnectSlaves(); /* Force our slaves to resync with us as well. */
     freeReplicationBacklog(); /* Don't allow our chained slaves to PSYNC. */
 
@@ -1938,13 +1951,16 @@ void replicationSetMaster(char *ip, int port) {
     sdsfree(server.masterhost);
     server.masterhost = sdsnew(ip);
     server.masterport = port;
+    //释放原来主节点建立到本从节点的连接
     if (server.master) {
         freeClient(server.master);
     }
+    //解除所有客户端的阻塞状态
     disconnectAllBlockedClients(); /* Clients blocked in master, now slave. */
 
     /* Force our slaves to resync with us as well. They may hopefully be able
      * to partially resync with us, but we can notify the replid change. */
+    // 关闭所有从节点服务器的连接，强制从节点服务器进行重新同步操作
     disconnectSlaves();
     cancelReplicationHandshake();
     /* Before destroying our master state, create a cached master using
@@ -1999,7 +2015,7 @@ void replicationHandleMasterDisconnection(void) {
 
 void slaveofCommand(client *c) {
     /* SLAVEOF is not allowed in cluster mode as replication is automatically
-     * configured using the current address of the master node. */
+     * configured using the current address of the master node. */ //集群模式下使用CLUSTER REPLICATE node-id命令
     if (server.cluster_enabled) {
         addReplyError(c,"SLAVEOF not allowed in cluster mode.");
         return;

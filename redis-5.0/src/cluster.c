@@ -1278,6 +1278,10 @@ int clusterHandshakeInProgress(char *ip, int port, int cport) {
  *
  * EAGAIN - There is already an handshake in progress for this address.
  * EINVAL - IP or port are not valid. */
+// 新型网路地址转化函数inet_pton和inet_ntop,   函数中p和n分别代表表达（presentation)和数值（numeric)
+// inet_pton 将点分十进制的ip地址转化为用于网络传输的数值格式
+// inet_ntop 将数值格式转化为点分十进制的ip地址格式
+// inet_pton将ipv4和ipv6地址转换成二进制形式;使用inet_pton验证字符串是否是合法的ipv4或ipv6地址
 int clusterStartHandshake(char *ip, int port, int cport) {
     clusterNode *n;
     char norm_ip[NET_IP_STR_LEN];
@@ -1553,23 +1557,35 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
     for (j = 0; j < CLUSTER_SLOTS; j++) {
         if (bitmapTestBit(slots,j)) {
             /* The slot is already bound to the sender of this message. */
+            // 跳过已经被myself节点视角下集群中的sender节点所负责的槽位，没必要更新。
             if (server.cluster->slots[j] == sender) continue;
 
             /* The slot is in importing state, it should be modified only
              * manually via redis-trib (example: a resharding is in progress
              * and the migrating side slot was already closed and is advertising
              * a new config. We still want the slot to be closed manually). */
+            // 跳过处于myself节点视角中的集群中导入状态的槽位，因为它应该被专门的工具redis-trib修改。
             if (server.cluster->importing_slots_from[j]) continue;
 
             /* We rebind the slot to the new node claiming it if:
              * 1) The slot was unassigned or the new node claims it with a
              *    greater configEpoch.
              * 2) We are not currently importing the slot. */
+            /*
+             * 如果myself节点视角下集群关于该槽没有指定负责的节点，会直接调用函数指派槽位。
+             * 如果发送节点的配置纪元更大，表示发送节点版本更新。这种情况需要进行两个if判断，判断是否发生了槽位指派节点冲突和是否检测到了故障。
+             * */
             if (server.cluster->slots[j] == NULL ||
                 server.cluster->slots[j]->configEpoch < senderConfigEpoch)
             {
                 /* Was this slot mine, and still contains keys? Mark it as
                  * a dirty slot. */
+                /*
+                 * 当前槽是myself节点负责，并且槽中还有键，但是消息中确实发送节点负责，
+                 * 这样就发生了槽位指派节点冲突的情况，会将发生冲突的节点保存到dirty_slots数组中。
+                 * 这种情况的处理办法是：遍历所有发生冲突的槽位，遍历dirty_slots数组，将发生冲突的槽位和myself节点解除关系，
+                 * 也就是从myself节点负责的槽位中取消负责发生冲突的槽位。因为消息中的信息的最准确的，要以消息中的信息为准。
+                 * */
                 if (server.cluster->slots[j] == myself &&
                     countKeysInSlot(j) &&
                     sender != myself)
@@ -1578,6 +1594,8 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
                     dirty_slots_count++;
                 }
 
+                // 这里curmaster还是有可能为myself的，即server.cluster->slots[j] == myself && countKeysInSlot(j) == 0
+                // 或者myself为从节点，
                 if (server.cluster->slots[j] == curmaster)
                     newmaster = sender;
                 clusterDelSlot(j);
@@ -1596,6 +1614,8 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
      *    master.
      * 2) We are a slave and our master is left without slots. We need
      *    to replicate to the new slots owner. */
+    // 1) myself是主节点并且没有负责槽，这意味着myself发生了故障转移，myself将变为一个新的主节点的从节点
+    // 2) myself是从节点，并且myself的主节点没有负责任何槽，则myself需要去复制一个负责槽的新主
     if (newmaster && curmaster->numslots == 0) {
         serverLog(LL_WARNING,
             "Configuration change detected. Reconfiguring myself "
@@ -1626,6 +1646,12 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
  * was processed, otherwise 0 if the link was freed since the packet
  * processing lead to some inconsistency error (for instance a PONG
  * received from the wrong sender ID). */
+// 网络字节顺序与主机字节顺序之间的转换函数：
+// htonl()--"Host to Network Long" 32 位
+// ntohl()--"Network to Host Long" 32 位
+// htons()--"Host to Network Short" 16 位
+// ntohs()--"Network to Host Short" 16 位
+
 int clusterProcessPacket(clusterLink *link) {
     clusterMsg *hdr = (clusterMsg*) link->rcvbuf;
     uint32_t totlen = ntohl(hdr->totlen);
@@ -1638,7 +1664,7 @@ int clusterProcessPacket(clusterLink *link) {
 
     /* Perform sanity checks */
     if (totlen < 16) return 1; /* At least signature, version, totlen, count. */
-    if (totlen > sdslen(link->rcvbuf)) return 1;
+    if (totlen > sdslen(link->rcvbuf)) return 1;  //读取的内容小于消息长度
 
     if (ntohs(hdr->ver) != CLUSTER_PROTO_VER) {
         /* Can't handle messages of different versions. */
@@ -1649,13 +1675,14 @@ int clusterProcessPacket(clusterLink *link) {
     uint64_t senderCurrentEpoch = 0, senderConfigEpoch = 0;
     clusterNode *sender;
 
+    //验证消息长度
     if (type == CLUSTERMSG_TYPE_PING || type == CLUSTERMSG_TYPE_PONG ||
         type == CLUSTERMSG_TYPE_MEET)
     {
         uint16_t count = ntohs(hdr->count);
         uint32_t explen; /* expected length of this packet */
 
-        explen = sizeof(clusterMsg)-sizeof(union clusterMsgData);
+        explen = sizeof(clusterMsg)-sizeof(union clusterMsgData);  // sizeof(union clusterMsgData) == sizeof(clusterMsgDataUpdate) == 2096
         explen += (sizeof(clusterMsgDataGossip)*count);
         if (totlen != explen) return 1;
     } else if (type == CLUSTERMSG_TYPE_FAIL) {
@@ -1739,6 +1766,11 @@ int clusterProcessPacket(clusterLink *link) {
          * However if we don't have an address at all, we update the address
          * even with a normal PING packet. If it's wrong it will be fixed
          * by MEET later. */
+        /* 我们使用传入的MEET消息来设置当前myself节点的地址，因为只有其他集群中的节点在握手的时会发送MEET消息，
+         * 当有节点加入集群时，或者如果我们改变地址，这些节点将使用我们公开的地址来连接我们，
+         * 所以在集群中，通过套接字来获取地址是一个简单的方法去发现或更新我们自己的地址，而不是在配置中的硬设置
+         * 但是，如果我们根本没有地址，即使使用正常的PING数据包，我们也会更新该地址。 如果是错误的，那么会被MEET修改
+         * */
         if ((type == CLUSTERMSG_TYPE_MEET || myself->ip[0] == '\0') &&
             server.cluster_announce_ip == NULL)
         {
@@ -1747,6 +1779,7 @@ int clusterProcessPacket(clusterLink *link) {
             if (anetSockName(link->fd,ip,sizeof(ip),NULL) != -1 &&
                 strcmp(ip,myself->ip))
             {
+                // strcmp != 0 说明ip地址和之前保存的不相等，ip地址发生了变化，更新ip地址
                 memcpy(myself->ip,ip,NET_IP_STR_LEN);
                 serverLog(LL_WARNING,"IP address for this node updated to %s",
                     myself->ip);
@@ -1758,6 +1791,9 @@ int clusterProcessPacket(clusterLink *link) {
          * In this stage we don't try to add the node with the right
          * flags, slaveof pointer, and so forth, as this details will be
          * resolved when we'll receive PONGs from the node. */
+        // 如果发送节点对我们来说是一个新节点，将发送MEET消息的对方节点加入本服务器dict中
+        // 当前该节点的flags、slaveof等等都没有设置，当从其他节点接收到PONG时可以从中获取到信息
+        // 由于这是第一次两个节点之间的握手，那么myself节点一定在目标节点视角中的集群是找不到的，所以sender变量为NULL
         if (!sender && type == CLUSTERMSG_TYPE_MEET) {
             clusterNode *node;
 
@@ -1775,7 +1811,7 @@ int clusterProcessPacket(clusterLink *link) {
         if (!sender && type == CLUSTERMSG_TYPE_MEET)
             clusterProcessGossipSection(hdr,link);
 
-        /* Anyway reply with a PONG */
+        /* Anyway reply with a PONG */   // 回复PONG
         clusterSendPing(link,CLUSTERMSG_TYPE_PONG);
     }
 
@@ -1816,6 +1852,7 @@ int clusterProcessPacket(clusterLink *link) {
             } else if (memcmp(link->node->name,hdr->sender,
                         CLUSTER_NAMELEN) != 0)
             {
+                // 如果不是握手状态，且发送节点的node ID与之前保存的node ID不一致，则删除和该节点的连接
                 /* If the reply has a non matching node ID we
                  * disconnect this node and set it as not having an associated
                  * address. */
@@ -1856,8 +1893,8 @@ int clusterProcessPacket(clusterLink *link) {
 
         /* Update our info about the node */
         if (link->node && type == CLUSTERMSG_TYPE_PONG) {
-            link->node->pong_received = mstime();
-            link->node->ping_sent = 0;
+            link->node->pong_received = mstime();       // 更新接收到PONG的时间
+            link->node->ping_sent = 0;                  // 清零最近一次发送PING的时间戳
 
             /* The PFAIL condition can be reversed without external
              * help if it is momentary (that is, if it does not
@@ -1865,6 +1902,8 @@ int clusterProcessPacket(clusterLink *link) {
              *
              * The FAIL condition is also reversible under specific
              * conditions detected by clearNodeFailureIfNeeded(). */
+            // 接收到PONG回复，可以删除PFAIL（疑似下线）标识
+            // FAIL标识能否删除，需要clearNodeFailureIfNeeded()来决定
             if (nodeTimedOut(link->node)) {
                 link->node->flags &= ~CLUSTER_NODE_PFAIL;
                 clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG|
@@ -2132,6 +2171,7 @@ void clusterWriteHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
 /* Read data. Try to read the first field of the header first to check the
  * full length of the packet. When a whole packet is in memory this function
  * will call the function to process the packet. And so forth. */
+// 节点内部通信端口(server.port+CLUSTER_PORT_INCR)上建立的连接套接字对两端的socket读事件回调函数
 void clusterReadHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
     char buf[sizeof(clusterMsg)];
     ssize_t nread;
@@ -2146,6 +2186,7 @@ void clusterReadHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
         if (rcvbuflen < 8) {
             /* First, obtain the first 8 bytes to get the full message
              * length. */
+            //先读取前8个字节，得到消息的总长度;(消息前4个字节是签名，i第二个4字节是消息长度)
             readlen = 8 - rcvbuflen;
         } else {
             /* Finally read the full message. */
@@ -2163,7 +2204,7 @@ void clusterReadHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
                     return;
                 }
             }
-            readlen = ntohl(hdr->totlen) - rcvbuflen;
+            readlen = ntohl(hdr->totlen) - rcvbuflen;       //计算需要读取的消息长度
             if (readlen > sizeof(buf)) readlen = sizeof(buf);
         }
 
@@ -2183,7 +2224,7 @@ void clusterReadHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
             rcvbuflen += nread;
         }
 
-        /* Total length obtained? Process this packet. */
+        /* Total length obtained? Process this packet. */  //如果读取到完整的消息则处理
         if (rcvbuflen >= 8 && rcvbuflen == ntohl(hdr->totlen)) {
             if (clusterProcessPacket(link)) {
                 sdsfree(link->rcvbuf);
@@ -3345,6 +3386,8 @@ void clusterCron(void) {
      * not turned into a normal node is removed from the nodes. Usually it is
      * just the NODE_TIMEOUT value, but when NODE_TIMEOUT is too small we use
      * the value of 1 second. */
+    // 获取握手状态超时的时间，最低为1s
+    // 如果一个处于握手状态的节点如果没有在该超时时限内变成一个普通的节点，那么该节点从节点字典中被删除
     handshake_timeout = server.cluster_node_timeout;
     if (handshake_timeout < 1000) handshake_timeout = 1000;
 

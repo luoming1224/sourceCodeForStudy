@@ -227,7 +227,7 @@ typedef long long mstime_t; /* millisecond time type. */
 #define CLIENT_SLAVE (1<<0)   /* This client is a slave server */
 #define CLIENT_MASTER (1<<1)  /* This client is a master server */
 #define CLIENT_MONITOR (1<<2) /* This client is a slave monitor, see MONITOR */
-#define CLIENT_MULTI (1<<3)   /* This client is in a MULTI context */
+#define CLIENT_MULTI (1<<3)   /* This client is in a MULTI context */ //客户端处于事务环境中
 #define CLIENT_BLOCKED (1<<4) /* The client is waiting in a blocking operation */
 #define CLIENT_DIRTY_CAS (1<<5) /* Watched keys modified. EXEC will fail. */
 #define CLIENT_CLOSE_AFTER_REPLY (1<<6) /* Close after writing entire reply. */
@@ -1133,8 +1133,8 @@ struct redisServer {
                                        gets released. */
     time_t repl_no_slaves_since;    /* We have no slaves since that time.
                                        Only valid if server.slaves len is 0. */
-    int repl_min_slaves_to_write;   /* Min number of slaves to write. */
-    int repl_min_slaves_max_lag;    /* Max lag of <count> slaves to write. */
+    int repl_min_slaves_to_write;   /* Min number of slaves to write. */  //默认值0
+    int repl_min_slaves_max_lag;    /* Max lag of <count> slaves to write. */  //默认值10
     int repl_good_slaves_count;     /* Number of slaves with lag <= max_lag. */
     int repl_diskless_sync;         /* Send RDB to slaves sockets directly. */
     int repl_diskless_sync_delay;   /* Delay to start a diskless repl BGSAVE. */
@@ -1217,7 +1217,7 @@ struct redisServer {
                                    xor of NOTIFY_... flags. */
     /* Cluster */
     int cluster_enabled;      /* Is cluster enabled? */
-    mstime_t cluster_node_timeout; /* Cluster node timeout. */
+    mstime_t cluster_node_timeout; /* Cluster node timeout. */   //默认值15000
     char *cluster_configfile; /* Cluster auto-generated config file name. */
     struct clusterState *cluster;  /* State of the cluster */
     int cluster_migration_barrier; /* Cluster replicas migration barrier. */
