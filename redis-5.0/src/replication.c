@@ -462,6 +462,17 @@ int masterTryPartialResynchronization(client *c) {
      *
      * Note that there are two potentially valid replication IDs: the ID1
      * and the ID2. The ID2 however is only valid up to a specific offset. */
+    /*
+     * (1)strcasecmp相同时返回０，不相等时返回非０
+     * (2)&& 优先级比 || 高
+     * (3)master_replid和server.replid不相等并且和server.replid2也不相等，需要执行全量复制
+     *    即既不是重连或者重启，也不是failover情形下，也需要全量复制
+     *    master_replid和server.replid相等应用于从节点断线重连或者重启
+     *    master_replid和server.replid2相等，应用于从节点提升为主节点情形
+     * (4)master_replid和server.replid不相等，虽然和server.replid2相等，但是psync_offset > server.second_replid_offset，也需要执行全量复制
+     * 　　这种情形即为从节点提升为主节点时，虽然和server.replid2相等，但是从节点的复制偏移量比新主节点大，也无法执行部分复制
+     * 参考 https://zhuanlan.zhihu.com/p/44105707
+     */
     if (strcasecmp(master_replid, server.replid) &&
         (strcasecmp(master_replid, server.replid2) ||
          psync_offset > server.second_replid_offset))
@@ -476,6 +487,7 @@ int masterTryPartialResynchronization(client *c) {
                     "replication IDs are '%s' and '%s')",
                     master_replid, server.replid, server.replid2);
             } else {
+                //从节点同步进度比failover后新的主节点还快
                 serverLog(LL_NOTICE,"Partial resynchronization not accepted: "
                     "Requested offset for second ID was %lld, but I can reply "
                     "up to %lld", psync_offset, server.second_replid_offset);
@@ -488,6 +500,7 @@ int masterTryPartialResynchronization(client *c) {
     }
 
     /* We still have the data our slave is asking for? */
+    //判断主节点是否没有复制积压缓冲区或者同步进度是否超过复制积压缓冲区范围
     if (!server.repl_backlog ||
         psync_offset < server.repl_backlog_off ||
         psync_offset > (server.repl_backlog_off + server.repl_backlog_histlen))

@@ -1220,7 +1220,7 @@ struct redisServer {
     mstime_t cluster_node_timeout; /* Cluster node timeout. */   //默认值15000
     char *cluster_configfile; /* Cluster auto-generated config file name. */
     struct clusterState *cluster;  /* State of the cluster */
-    int cluster_migration_barrier; /* Cluster replicas migration barrier. */
+    int cluster_migration_barrier; /* Cluster replicas migration barrier. */ //默认值１
     int cluster_slave_validity_factor; /* Slave max data age for failover. */
     int cluster_require_full_coverage; /* If true, put the cluster down if
                                           there is at least an uncovered slot.*/
