@@ -123,6 +123,9 @@ void freeReplicationBacklog(void) {
  * This function also increments the global replication offset stored at
  * server.master_repl_offset, because there is no case where we want to feed
  * the backlog without incrementing the offset. */
+/*
+ * 添加数据到环形的复制偏移缓冲区，更新（增长）主节点的复制偏移值
+ */
 void feedReplicationBacklog(void *ptr, size_t len) {
     unsigned char *p = ptr;
 
@@ -141,9 +144,11 @@ void feedReplicationBacklog(void *ptr, size_t len) {
         p += thislen;
         server.repl_backlog_histlen += thislen;
     }
+    // repl_backlog_histlen记录复制偏移缓冲区中实际保存的数据长度，所以这个数值不会超过复制偏移缓冲区的大小
+    // 或者说这个值增长到repl_backlog_size后就不会继续增长了
     if (server.repl_backlog_histlen > server.repl_backlog_size)
         server.repl_backlog_histlen = server.repl_backlog_size;
-    /* Set the offset of the first byte we have in the backlog. */
+    /* Set the offset of the first byte we have in the backlog. */ //计算复制偏移缓冲区中第一个字节的偏移
     server.repl_backlog_off = server.master_repl_offset -
                               server.repl_backlog_histlen + 1;
 }
@@ -170,6 +175,9 @@ void feedReplicationBacklogWithObject(robj *o) {
  * the commands received by our clients in order to create the replication
  * stream. Instead if the instance is a slave and has sub-slaves attached,
  * we use replicationFeedSlavesFromMaster() */
+/*
+ * 传播写命令到从节点，同时填充复制偏移缓冲区.这个函数用于主节点:使用我们的客户端接收到的命令来创建复制流。
+ */
 void replicationFeedSlaves(list *slaves, int dictid, robj **argv, int argc) {
     listNode *ln;
     listIter li;
@@ -240,13 +248,14 @@ void replicationFeedSlaves(list *slaves, int dictid, robj **argv, int argc) {
             /* We need to feed the buffer with the object as a bulk reply
              * not just as a plain string, so create the $..CRLF payload len
              * and add the final CRLF */
+            // $3\r\nset\r\n
             aux[0] = '$';
             len = ll2string(aux+1,sizeof(aux)-1,objlen);
             aux[len+1] = '\r';
             aux[len+2] = '\n';
             feedReplicationBacklog(aux,len+3);
             feedReplicationBacklogWithObject(argv[j]);
-            feedReplicationBacklog(aux+len+1,2);
+            feedReplicationBacklog(aux+len+1,2);    // "\r\n"
         }
     }
 
@@ -341,6 +350,7 @@ void replicationFeedMonitors(client *c, list *monitors, int dictid, robj **argv,
 
 /* Feed the slave 'c' with the replication backlog starting from the
  * specified 'offset' up to the end of the backlog. */
+// 将环形复制积压缓冲区中从指定的offset位置开始到最后的数据，都发送给从节点(用于部分重同步时)
 long long addReplyReplicationBacklog(client *c, long long offset) {
     long long j, skip, len;
 
@@ -535,7 +545,7 @@ int masterTryPartialResynchronization(client *c) {
         freeClientAsync(c);
         return C_OK;
     }
-    psync_len = addReplyReplicationBacklog(c,psync_offset);
+    psync_len = addReplyReplicationBacklog(c,psync_offset); //把复制积压缓冲区中的数据发送给从节点
     serverLog(LL_NOTICE,
         "Partial resynchronization request from %s accepted. Sending %lld bytes of backlog starting from offset %lld.",
             replicationGetSlaveName(c),
@@ -1067,6 +1077,11 @@ int slaveIsInHandshakeState(void) {
  * The function is called in two contexts: while we flush the current
  * data with emptyDb(), and while we load the new data received as an
  * RDB file from the master. */
+/*
+ * 在全量同步加载RDB文件的过程中，避免master认为slave超时，slave会给master发送一个换行符("\n")
+ * 该函数会在两种情景下调用：（１）在slave加载RDB文件前，需要先调用emptyDb()清空本地数据，在emptyDb()函数中会调用一个回调函数（即为该函数），
+ * （２）在从节点加载RDB文件的过程中，从节点每次读取RDB文件内容时，会调用校验函数，在校验函数中满足一定条件时会调用该函数给主节点发送一个换行符
+ */
 void replicationSendNewlineToMaster(void) {
     static time_t newline_sent;
     if (time(NULL) != newline_sent) {
@@ -1115,6 +1130,7 @@ void restartAOF() {
 }
 
 /* Asynchronously read the SYNC payload we receive from a master */
+// 该函数就会把主节点发来的数据读到一个缓冲区中，然后将缓冲区的数据写到刚才打开的临时文件中，接着要载入到从节点的数据库中，最后同步到磁盘中。
 #define REPL_MAX_WRITTEN_BEFORE_FSYNC (1024*1024*8) /* 8 MB */
 void readSyncBulkPayload(aeEventLoop *el, int fd, void *privdata, int mask) {
     char buf[4096];
@@ -2575,6 +2591,7 @@ void replicationCron(void) {
     /* Send ACK to master from time to time.
      * Note that we do not send periodic acks to masters that don't
      * support PSYNC and replication offsets. */
+    // 从节点每秒钟给主节点发送一个ack，并且带上复制的偏移量
     if (server.masterhost && server.master &&
         !(server.master->flags & CLIENT_PRE_PSYNC))
         replicationSendAck();
@@ -2588,6 +2605,7 @@ void replicationCron(void) {
     robj *ping_argv[1];
 
     /* First, send PING according to ping_slave_period. */
+    // 主节点每10秒钟给所有的从节点发一个PING命令 (repl_ping_slave_period默认值是10)
     if ((replication_cron_loops % server.repl_ping_slave_period) == 0 &&
         listLength(server.slaves))
     {
@@ -2611,6 +2629,11 @@ void replicationCron(void) {
      * last interaction timer preventing a timeout. In this case we ignore the
      * ping period and refresh the connection once per second since certain
      * timeouts are set at a few seconds (example: PSYNC response). */
+    /*
+     * 在从节点等待BGSAVE开始和等待BGSAVE完成时，主节点每秒钟给该从节点发送一个换行符("\n")
+     * 从节点会忽略该换行符，但是会更新和主节点最后的交互时间lastinteraction，
+     * 保证了不会发生timeout，也不会影响复制偏移量
+     */
     listRewind(server.slaves,&li);
     while((ln = listNext(&li))) {
         client *slave = ln->value;

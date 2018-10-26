@@ -3390,6 +3390,15 @@ void clusterCron(void) {
 
     iteration++; /* Number of times this function was called so far. */
 
+    /*
+     * extern char *strdup(char *s);
+     *   头文件：string.h
+     *   功能: 将串拷贝到新建的位置处
+     *   说 明：strdup不是标准的c函数。strdup()在内部调用了malloc()为变量分配内存，不需要使用返回的字符串时，需要用free()释放相应的内存空间，否则会造成内存泄漏。
+     *   返回值：返回一个指针,指向为复制字符串分配的空间;如果分配空间失败,则返回NULL值。
+     *   ---------------------
+     *   原文：https://blog.csdn.net/koozxcv/article/details/49306751
+     */
     /* We want to take myself->ip in sync with the cluster-announce-ip option.
      * The option can be set at runtime via CONFIG SET, so we periodically check
      * if the option changed to reflect this into myself->ip. */
@@ -3410,6 +3419,9 @@ void clusterCron(void) {
                 /* We always take a copy of the previous IP address, by
                  * duplicating the string. This way later we can check if
                  * the address really changed. */
+                /*
+                 * 如果不调用zstrdup函数，上面的strcmp函数会永远返回0，由于上面的prev_ip=curr_ip赋值会导致两者一直相等
+                 */
                 prev_ip = zstrdup(prev_ip);
                 strncpy(myself->ip,server.cluster_announce_ip,NET_IP_STR_LEN);
                 myself->ip[NET_IP_STR_LEN-1] = '\0';
@@ -3842,6 +3854,9 @@ void clusterCloseAllSlots(void) {
  * and are based on heuristics. Actually the main point about the rejoin and
  * writable delay is that they should be a few orders of magnitude larger
  * than the network latency. */
+/*
+ * 以下定义仅用于评价函数，并基于启发式算法。实际上，关于重联和可写延迟的主要一点是它们应该比网络延迟大几个数量级。
+ */
 #define CLUSTER_MAX_REJOIN_DELAY 5000
 #define CLUSTER_MIN_REJOIN_DELAY 500
 #define CLUSTER_WRITABLE_DELAY 2000
