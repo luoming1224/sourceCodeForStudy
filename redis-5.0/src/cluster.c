@@ -1596,6 +1596,7 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
 
                 // 这里curmaster还是有可能为myself的，即server.cluster->slots[j] == myself && countKeysInSlot(j) == 0
                 // 或者myself为从节点，
+                // 这里发生在failover后，主节点会发现自己负责的槽位有新的节点声明由其负责；从节点会发现自己的主节点所负责的槽位有新的节点声明由其负责
                 if (server.cluster->slots[j] == curmaster)
                     newmaster = sender;
                 clusterDelSlot(j);

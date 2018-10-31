@@ -2222,7 +2222,7 @@ void replicationCacheMaster(client *c) {
  * Assuming this instance was previously the master instance of the new master,
  * the new master will accept its replication ID, and potentiall also the
  * current offset if no data was lost during the failover. So we use our
- * current replication ID and offset in order to synthesize a cached master. */
+ * current replication ID and offset in order to synthesize(合成) a cached master. */
 void replicationCacheMasterUsingMyself(void) {
     /* The master client we create can be set to any DBID, because
      * the new master will start its replication stream with SELECT. */
@@ -2659,7 +2659,7 @@ void replicationCron(void) {
         while((ln = listNext(&li))) {
             client *slave = ln->value;
 
-            if (slave->replstate != SLAVE_STATE_ONLINE) continue;
+            if (slave->replstate != SLAVE_STATE_ONLINE) continue; //RDB文件传输完毕前不检查从节点的连接状态
             if (slave->flags & CLIENT_PRE_PSYNC) continue;
             if ((server.unixtime - slave->repl_ack_time) > server.repl_timeout)
             {
