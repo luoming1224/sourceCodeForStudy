@@ -121,6 +121,7 @@ add_executable(redis
         src/zmalloc.h
         src/defrag.c
         src/evict.c
+        src/lazyfree.c
         )
 
 set_property(TARGET redis PROPERTY C_STANDARD 99)

@@ -996,6 +996,15 @@ int writeToClient(int fd, client *c, int handler_installed) {
          * Moreover, we also send as much as possible if the client is
          * a slave (otherwise, on high-speed traffic, the replication
          * buffer will grow indefinitely) */
+        /*
+         * 如果这次写的总量大于NET_MAX_WRITES_PER_EVENT(64K)的限制，则会中断本次的写操作，
+         * 将处理时间让给其他的client，以免一个非常的回复独占服务器，剩余的数据下次继续在写
+         *
+         * 但是，如果当服务器的内存数已经超过maxmemory，即使超过最大写NET_MAX_WRITES_PER_EVENT的限制，
+         * 也会继续执行写入操作，是为了尽快写入给客户端
+         *
+         * 此外，如果客户端是从节点，我们还会尽可能地发送（否则，在高速流量下，复制缓冲区将无限增长）
+         */
         if (totwritten > NET_MAX_WRITES_PER_EVENT &&
             (server.maxmemory == 0 ||
              zmalloc_used_memory() < server.maxmemory) &&
@@ -1017,6 +1026,11 @@ int writeToClient(int fd, client *c, int handler_installed) {
          * as an interaction, since we always send REPLCONF ACK commands
          * that take some time to just fill the socket output buffer.
          * We just rely on data / pings received for timeout detection. */
+        /*
+         * 对于代表主节点的客户端，lastinteraction用于从节点判断接收主节点的数据是否超时（判断主节点是否长时间未给本从节点发送数据）
+         * 所以从节点发送给主节点的replconf ack命令，不计算为主节点的交互
+         * 从节点仅仅依赖于从主节点接收到的用于超时检测的数据或ping　来更新该与主节点的交互时间
+         */
         if (!(c->flags & CLIENT_MASTER)) c->lastinteraction = server.unixtime;
     }
     if (!clientHasPendingReplies(c)) {
@@ -2038,6 +2052,13 @@ int checkClientOutputBufferLimits(client *c) {
  * Note: we need to close the client asynchronously because this function is
  * called from contexts where the client can't be freed safely, i.e. from the
  * lower level functions pushing data inside the client output buffers. */
+/*
+ * 如果输出缓冲区大小达到软限制或硬限制，则异步关闭客户端。 调用者可以检查是否将关闭客户端，
+ * 检查是否设置了客户端CLIENT_CLOSE_ASAP标志。
+ *
+ * 注意：我们需要异步关闭客户端，因为这个函数是从客户端不能安全释放的上下文调用的，
+ * 例如，往客户端输出缓冲区中推送数据的下级函数调用的。
+ */
 void asyncCloseClientOnOutputBufferLimitReached(client *c) {
     serverAssert(c->reply_bytes < SIZE_MAX-(1024*64));
     if (c->reply_bytes == 0 || c->flags & CLIENT_CLOSE_ASAP) return;

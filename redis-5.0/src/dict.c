@@ -425,6 +425,17 @@ int dictDelete(dict *ht, const void *key) {
  * // Do something with entry
  * dictFreeUnlinkedEntry(entry); // <- This does not need to lookup again.
  */
+/*
+ * 从hash表中移除元素，但是并没有实际释放key/value/字典结构等的内存．
+ * 如果键值对（字典元素）存在，该条目会被返回（并且会从hash表中摘除），
+ * 用户需要接下来主动调用dictFreeUnlinkedEntry函数释放该条目的内存．
+ * 如果key不存在，则返回NULL．
+ *
+ * 当我们想要移除hash表中一些元素，但是在真正删除这些元素前，又需要用到其值时，该函数非常有用．
+ *
+ * 如果没有该函数，这种情景下，我们需要调用两次lookup族函数，
+ * 由于该函数，我们可以避免这种情况，只需要调用一次lookup即可．
+ */
 dictEntry *dictUnlink(dict *ht, const void *key) {
     return dictGenericDelete(ht,key,1);
 }

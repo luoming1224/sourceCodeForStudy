@@ -59,10 +59,12 @@ int dbAsyncDelete(redisDb *db, robj *key) {
     /* If the value is composed of a few allocations, to free in a lazy way
      * is actually just slower... So under a certain limit we just free
      * the object synchronously. */
+    // 如果key存在，则返回一个hash表中的键值对元素，并且将该元素从hash表中摘除，但没有真正释放键值对的内存
+    // 摘除后，后续命令就查询不到
     dictEntry *de = dictUnlink(db->dict,key->ptr);
     if (de) {
         robj *val = dictGetVal(de);
-        size_t free_effort = lazyfreeGetFreeEffort(val);
+        size_t free_effort = lazyfreeGetFreeEffort(val);    //获取val对象需要释放的内存块数目
 
         /* If releasing the object is too much work, do it in the background
          * by adding the object to the lazy free list.
@@ -72,15 +74,26 @@ int dbAsyncDelete(redisDb *db, robj *key) {
          * objects, and then call dbDelete(). In this case we'll fall
          * through and reach the dictFreeUnlinkedEntry() call, that will be
          * equivalent to just calling decrRefCount(). */
+        /*
+         * 如果val对象比较大，释放val对象的工作量比较大，则将该对象加入惰性释放队列中等待后台线程释放．
+         * 注意如果是一个共享对象，则不能直接释放其内存．
+         * 这很少发生，但是在部分redis内部实现中，会先调用incrRefCount保护该对象，然后调用dbDelete释放．
+         * 这种情况下，我们不操作，然后到达接下来的dictFreeUnlinkedEntry函数调用，在那里处理时会相当于只是调用一个decrRefCount.
+         */
         if (free_effort > LAZYFREE_THRESHOLD && val->refcount == 1) {
+            //原子操作给lazyfree_objects加1，以备info命令查看有多少对象待后台线程删除
             atomicIncr(lazyfree_objects,1);
+            //此时真正把对象val丢到后台线程的任务队列中
             bioCreateBackgroundJob(BIO_LAZY_FREE,val,NULL,NULL);
+            //把条目里的val指针设置为NULL，防止删除数据库字典条目时重复删除val对象
             dictSetVal(db->dict,de,NULL);
         }
     }
 
     /* Release the key-val pair, or just the key if we set the val
      * field to NULL in order to lazy free it later. */
+    //释放键值对内存资源
+    //如果我们把val设置为了NULL（为了惰性释放），则这里仅仅需要释放key
     if (de) {
         dictFreeUnlinkedEntry(db->dict,de);
         if (server.cluster_enabled) slotToKeyDel(key);
@@ -104,6 +117,10 @@ void freeObjAsync(robj *o) {
 /* Empty a Redis DB asynchronously. What the function does actually is to
  * create a new empty set of hash tables and scheduling the old ones for
  * lazy freeing. */
+/*
+ * 异步清空redis数据库．该函数实际上是为hash表创建一个新的空字典．
+ * 这里直接把db->dict和db->expires指向了新创建的两个空字典，然后把原来两个字典丢到后台线程的任务队列就好了然后把
+ */
 void emptyDbAsync(redisDb *db) {
     dict *oldht1 = db->dict, *oldht2 = db->expires;
     db->dict = dictCreate(&dbDictType,NULL);

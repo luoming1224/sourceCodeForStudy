@@ -1365,6 +1365,10 @@ void clusterProcessGossipSection(clusterMsg *hdr, clusterLink *link) {
         if (node) {
             /* We already know this node.
                Handle failure reports, only when the sender is a master. */
+            /*
+             * 检查节点是否下线，如果下线向所有集群传播下线通知
+             * 只会把主节点添加到节点故障报告列表中
+             */
             if (sender && nodeIsMaster(sender) && node != myself) {
                 if (flags & (CLUSTER_NODE_FAIL|CLUSTER_NODE_PFAIL)) {
                     if (clusterNodeAddFailureReport(node,sender)) {
@@ -1386,6 +1390,10 @@ void clusterProcessGossipSection(clusterMsg *hdr, clusterLink *link) {
              * we have no pending ping for the node, nor we have failure
              * reports for this node, update the last pong time with the
              * one we see from the other nodes. */
+            /*
+             * 如果在节点没有被标记为下线或者疑似下线，且我们还没有给节点发送ping消息，
+             * 且我们没有收到该节点的疑似下线报告，从其他节点更新最后收到pong的时间
+             */
             if (!(flags & (CLUSTER_NODE_FAIL|CLUSTER_NODE_PFAIL)) &&
                 node->ping_sent == 0 &&
                 clusterNodeFailureReportsCount(node) == 0)
@@ -1409,6 +1417,9 @@ void clusterProcessGossipSection(clusterMsg *hdr, clusterLink *link) {
              * can talk with this other node, update the address, disconnect
              * the old link if any, so that we'll attempt to connect with the
              * new address. */
+            // 如果节点存在，但是处于下线状态，
+            // 但消息中其他节点认为该节点没有下线，且保存的地址和消息中的地址发生了变化
+            // 表明节点更换了地址，尝试和节点的新地址进行连接
             if (node->flags & (CLUSTER_NODE_FAIL|CLUSTER_NODE_PFAIL) &&
                 !(flags & CLUSTER_NODE_NOADDR) &&
                 !(flags & (CLUSTER_NODE_FAIL|CLUSTER_NODE_PFAIL)) &&
@@ -1429,6 +1440,14 @@ void clusterProcessGossipSection(clusterMsg *hdr, clusterLink *link) {
              * Note that we require that the sender of this gossip message
              * is a well known node in our cluster, otherwise we risk
              * joining another cluster. */
+            /*
+             * 当收到cluster forget xxxx命令时，会将xxxx节点从cluster_nodes中删除，
+             * 且加入黑名单列表nodes_black_list中
+             *
+             * 如果node不处于NOADDR状态，并且集群中没有该节点，那么向node发送一个握手的消息
+             * 注意，当前sender节点必须是本集群的众所周知的节点（不在集群的黑名单中），否则有加入另一个集群的风险
+             *
+             */
             if (sender &&
                 !(flags & CLUSTER_NODE_NOADDR) &&
                 !clusterBlacklistExists(g->nodename))
@@ -3593,6 +3612,7 @@ void clusterCron(void) {
          * issue even if the node is alive. */
         /*
          * 如果已经发送了PING，等待PONG消息超过cluster_node_timeout/2，则断开到该节点的连接
+         * 释放回复PONG消息过慢（超过超时时间的一半）的节点连接，等待下个周期重新建立连接。这样做是为了连接更加健壮。
          */
         if (node->link && /* is connected */
             now - node->link->ctime >
@@ -5298,6 +5318,7 @@ try_again:
 
         /* Emit the payload argument, that is the serialized object using
          * the DUMP format. */
+        // 将值对象序列化，并将序列化的值对象写到回复中
         createDumpPayload(&payload,ov[j]);
         serverAssertWithInfo(c,NULL,
             rioWriteBulkString(&cmd,payload.io.buffer.ptr,

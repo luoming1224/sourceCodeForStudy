@@ -194,11 +194,11 @@ void *bioProcessBackgroundJobs(void *arg) {
              * arg2 & arg3 -> free two dictionaries (a Redis DB).
              * only arg3 -> free the skiplist. */
             if (job->arg1)
-                lazyfreeFreeObjectFromBioThread(job->arg1);
+                lazyfreeFreeObjectFromBioThread(job->arg1);     // 释放一个普通对象，string/set/zset/hash等等，用于普通对象的异步删除
             else if (job->arg2 && job->arg3)
-                lazyfreeFreeDatabaseFromBioThread(job->arg2,job->arg3);
+                lazyfreeFreeDatabaseFromBioThread(job->arg2,job->arg3);      // 释放全局redisDb对象的dict字典和expires字典，用于flushdb
             else if (job->arg3)
-                lazyfreeFreeSlotsMapFromBioThread(job->arg3);
+                lazyfreeFreeSlotsMapFromBioThread(job->arg3);       // 释放Cluster的slots_to_keys对象，参见源码篇的「基数树」小节
         } else {
             serverPanic("Wrong job type in bioProcessBackgroundJobs().");
         }
