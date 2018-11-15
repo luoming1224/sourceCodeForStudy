@@ -809,6 +809,8 @@ long long getInstantaneousMetric(int metric) {
  * The function gets the current time in milliseconds as argument since
  * it gets called multiple times in a loop, so calling gettimeofday() for
  * each iteration would be costly without any actual gain. */
+// 释放空闲连接客户端，释放长时间没有交互的客户端
+// 注意这里没有处理从节点和主节点的连接，因为在replicationCron中会专门处理主从连接是否超时
 int clientsCronHandleTimeout(client *c, mstime_t now_ms) {
     time_t now = now_ms/1000;
 

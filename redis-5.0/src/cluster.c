@@ -1600,7 +1600,7 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
                 /* Was this slot mine, and still contains keys? Mark it as
                  * a dirty slot. */
                 /*
-                 * 当前槽是myself节点负责，并且槽中还有键，但是消息中确实发送节点负责，
+                 * 当前槽是myself节点负责，并且槽中还有键，但是消息中却是发送节点负责，
                  * 这样就发生了槽位指派节点冲突的情况，会将发生冲突的节点保存到dirty_slots数组中。
                  * 这种情况的处理办法是：遍历所有发生冲突的槽位，遍历dirty_slots数组，将发生冲突的槽位和myself节点解除关系，
                  * 也就是从myself节点负责的槽位中取消负责发生冲突的槽位。因为消息中的信息的最准确的，要以消息中的信息为准。

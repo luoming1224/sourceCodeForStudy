@@ -47,6 +47,8 @@
 #include "zmalloc.h"
 #ifndef DICT_BENCHMARK_MAIN
 #include "redisassert.h"
+#include "server.h"
+
 #else
 #include <assert.h>
 #endif
@@ -151,11 +153,24 @@ int dictExpand(dict *d, unsigned long size)
     if (dictIsRehashing(d) || d->ht[0].used > size)
         return DICT_ERR;
 
+    //计算新的哈希表大小，使得新的哈希表大小为一个2的n次方;大于等于size的第一个2的n次方
     dictht n; /* the new hash table */
     unsigned long realsize = _dictNextPower(size);
 
     /* Rehashing to the same table size is not useful. */
     if (realsize == d->ht[0].size) return DICT_ERR;
+
+    /*
+     * 解决因设置maxmemory，rehash触发key淘汰问题
+     */
+    if (server.maxmemory) {
+        size_t mem_used = zmalloc_used_memory();
+        size_t overhead = freeMemoryGetNotCountedMemory();
+        mem_used = (mem_used > overhead) ? mem_used-overhead : 0;
+        mem_used += (realsize* sizeof(dictEntry*));
+        if (mem_used >= server.maxmemory) return DICT_ERR;
+        if (mem_used >= (server.maxmemory * 0.9)) return DICT_ERR;
+    }
 
     /* Allocate the new hash table and initialize all pointers to NULL */
     n.size = realsize;
@@ -165,12 +180,14 @@ int dictExpand(dict *d, unsigned long size)
 
     /* Is this the first initialization? If so it's not really a rehashing
      * we just set the first hash table so that it can accept keys. */
+    // 并非扩容，而是第一次初始化
     if (d->ht[0].table == NULL) {
         d->ht[0] = n;
         return DICT_OK;
     }
 
     /* Prepare a second hash table for incremental rehashing */
+    // 为渐进式扩容作准备，下面两个赋值非常重要
     d->ht[1] = n;
     d->rehashidx = 0;
     return DICT_OK;
@@ -257,6 +274,12 @@ int dictRehashMilliseconds(dict *d, int ms) {
  * This function is called by common lookup or update operations in the
  * dictionary so that the hash table automatically migrates from H1 to H2
  * while it is actively used. */
+/*
+ * 此函数仅执行一步hash表的重散列，并且仅当没有安全迭代器绑定到哈希表时。
+ * 当我们在重新散列中有迭代器时，我们不能混淆打乱两个散列表的数据，否则某些元素可能被遗漏或重复遍历。
+ *
+ * 该函数被在字典中查找或更新等普通操作调用，以致字典中的数据能自动的从哈系表１迁移到哈系表２
+ */
 static void _dictRehashStep(dict *d) {
     if (d->iterators == 0) dictRehash(d,1);
 }
@@ -933,15 +956,22 @@ unsigned long dictScan(dict *d,
 static int _dictExpandIfNeeded(dict *d)
 {
     /* Incremental rehashing already in progress. Return. */
+    // 如果正在进行渐进式扩容，则返回OK
     if (dictIsRehashing(d)) return DICT_OK;
 
     /* If the hash table is empty expand it to the initial size. */
+    // 如果哈希表ht[0]的大小为0，则初始化字典
     if (d->ht[0].size == 0) return dictExpand(d, DICT_HT_INITIAL_SIZE);
 
     /* If we reached the 1:1 ratio, and we are allowed to resize the hash
      * table (global setting) or we should avoid it but the ratio between
      * elements/buckets is over the "safe" threshold, we resize doubling
      * the number of buckets. */
+    /*
+     * 如果哈希表ht[0]中保存的key个数与哈希表大小的比例已经达到1:1，即保存的节点数已经大于哈希表大小
+     * 且redis服务当前允许执行rehash，或者保存的节点数与哈希表大小的比例超过了安全阈值（默认值为5）
+     * 则将哈希表大小扩容为原来的两倍
+     */
     if (d->ht[0].used >= d->ht[0].size &&
         (dict_can_resize ||
          d->ht[0].used/d->ht[0].size > dict_force_resize_ratio))

@@ -393,6 +393,9 @@ size_t freeMemoryGetNotCountedMemory(void) {
  *              limit.
  *              (Populated both for C_ERR and C_OK)
  */
+/*
+ * 在设置了maxmemory时，如果使用内存小于maxmemory则返回OK，否则如果超过maxmemory内存限制，返回ERR
+ */
 int getMaxmemoryState(size_t *total, size_t *logical, size_t *tofree, float *level) {
     size_t mem_reported, mem_used, mem_tofree;
 
@@ -407,6 +410,7 @@ int getMaxmemoryState(size_t *total, size_t *logical, size_t *tofree, float *lev
 
     /* Remove the size of slaves output buffers and AOF buffer from the
      * count of used memory. */
+    //计算占用内存大小时，并不计算slave output buffer和aof buffer，因此maxmemory应该比实际内存小，为这两个buffer留足空间。
     mem_used = mem_reported;
     size_t overhead = freeMemoryGetNotCountedMemory();
     mem_used = (mem_used > overhead) ? mem_used-overhead : 0;
