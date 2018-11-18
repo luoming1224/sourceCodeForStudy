@@ -122,6 +122,7 @@ add_executable(redis
         src/defrag.c
         src/evict.c
         src/lazyfree.c
+        src/siphash.c
         )
 
 set_property(TARGET redis PROPERTY C_STANDARD 99)
