@@ -123,6 +123,9 @@ add_executable(redis
         src/evict.c
         src/lazyfree.c
         src/siphash.c
+        src/childinfo.c
+        src/geohash.c
+        src/geohash_helper.c
         )
 
 set_property(TARGET redis PROPERTY C_STANDARD 99)

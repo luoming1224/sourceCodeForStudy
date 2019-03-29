@@ -188,6 +188,10 @@ void addReplyDoubleDistance(client *c, double d) {
  * only if the point is within the search area.
  *
  * returns C_OK if the point is included, or REIDS_ERR if it is outside. */
+// 从给定的有序集合 score 中解码出一个经纬度
+// 如果这个经纬度处于用户通过经纬度 lon 、lat 以及范围 radius 指定的范围之内
+// 那么将这个经纬度、解码出经纬度的分值、分值对应的元素记录到 geoPoint 结构里面
+// 然后将这个结构追加到数组的末尾
 int geoAppendIfWithinRadius(geoArray *ga, double lon, double lat, double radius, double score, sds member) {
     double distance, xy[2];
 
@@ -213,22 +217,29 @@ int geoAppendIfWithinRadius(geoArray *ga, double lon, double lat, double radius,
 /* Query a Redis sorted set to extract all the elements between 'min' and
  * 'max', appending them into the array of geoPoint structures 'gparray'.
  * The command returns the number of elements added to the array.
+ * 对有序集合进行查询，获取所有分值介于 min 和 max 之间的元素，
+ * 并将它们追加到由 geoPoint 结构组成的 gparray 数组里面。
+ * 这个函数返回数组的长度作为返回值。
  *
  * Elements which are farest than 'radius' from the specified 'x' and 'y'
  * coordinates are not included.
+ * 超出指定范围的元素不会被加入到数据里面，
+ * 范围由坐标 x 和 y 指定。
  *
  * The ability of this function to append to an existing set of points is
  * important for good performances because querying by radius is performed
  * using multiple queries to the sorted set, that we later need to sort
  * via qsort. Similarly we need to be able to reject points outside the search
  * radius area ASAP in order to allocate and process more points than needed. */
+//查找有序集合中，分值介于min和max之间，且在以lon和lat为中心，radius为半径范围内的所有点
 int geoGetPointsInRange(robj *zobj, double min, double max, double lon, double lat, double radius, geoArray *ga) {
     /* minex 0 = include min in range; maxex 1 = exclude max in range */
-    /* That's: min <= val < max */
+    /* That's: min <= val < max */  //左闭右开区间
     zrangespec range = { .min = min, .max = max, .minex = 0, .maxex = 1 };
     size_t origincount = ga->used;
     sds member;
 
+    // 在 ziplist 编码的有序集合里面进行查找
     if (zobj->encoding == OBJ_ENCODING_ZIPLIST) {
         unsigned char *zl = zobj->ptr;
         unsigned char *eptr, *sptr;
@@ -237,6 +248,7 @@ int geoGetPointsInRange(robj *zobj, double min, double max, double lon, double l
         long long vlong = 0;
         double score = 0;
 
+        // 指向分值处于范围之内的第一个元素
         if ((eptr = zzlFirstInRange(zl, &range)) == NULL) {
             /* Nothing exists starting at our min.  No results. */
             return 0;
@@ -258,6 +270,7 @@ int geoGetPointsInRange(robj *zobj, double min, double max, double lon, double l
                 == C_ERR) sdsfree(member);
             zzlNext(zl, &eptr, &sptr);
         }
+    // 在跳跃表编码的有序集合里面进行查找
     } else if (zobj->encoding == OBJ_ENCODING_SKIPLIST) {
         zset *zs = zobj->ptr;
         zskiplist *zsl = zs->zsl;
@@ -286,6 +299,7 @@ int geoGetPointsInRange(robj *zobj, double min, double max, double lon, double l
 /* Compute the sorted set scores min (inclusive), max (exclusive) we should
  * query in order to retrieve all the elements inside the specified area
  * 'hash'. The two scores are returned by reference in *min and *max. */
+// 计算出从有序集合里面查找指定范围内的所有位置所需的 min 值和 max 值。
 void scoresOfGeoHashBox(GeoHashBits hash, GeoHashFix52Bits *min, GeoHashFix52Bits *max) {
     /* We want to compute the sorted set scores that will include all the
      * elements inside the specified Geohash 'hash', which has as many

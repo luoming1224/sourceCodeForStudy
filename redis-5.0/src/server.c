@@ -465,6 +465,7 @@ void dictListDestructor(void *privdata, void *val)
     listRelease((list*)val);
 }
 
+// 返回值：０表示不相等；非０表示相等
 int dictSdsKeyCompare(void *privdata, const void *key1,
         const void *key2)
 {
